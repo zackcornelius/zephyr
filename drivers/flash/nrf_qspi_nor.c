@@ -78,8 +78,9 @@ BUILD_ASSERT(DT_INST_PROP(0, cpol) == DT_INST_PROP(0, cpha),
 BUILD_ASSERT(((INST_0_QER == JESD216_DW15_QER_NONE)
 	      || (INST_0_QER == JESD216_DW15_QER_S1B6)
 	      || (INST_0_QER == JESD216_DW15_QER_S2B1v4)
-	      || (INST_0_QER == JESD216_DW15_QER_S2B1v6)),
-	     "Driver only supports NONE, S1B6, S2B1v4, or S2B1v6 for quad-enable-requirements");
+	      || (INST_0_QER == JESD216_DW15_QER_S2B1v6)
+	      || (INST_0_QER == JESD216_DW15_QER_S2B1v5)),
+	     "Driver only supports NONE, S1B6, S2B1v4, S2B1v5 or S2B1v6 for quad-enable-requirements");
 
 #if NRF52_ERRATA_122_PRESENT
 #include <hal/nrf_gpio.h>
@@ -426,10 +427,21 @@ static int qspi_wait_while_writing(const struct device *dev)
 	return (ret < 0) ? ret : 0;
 }
 
-static int qspi_wrsrX(const struct device *dev, uint8_t sr_val, uint8_t sr_num)
+static int qspi_wrsrX(const struct device *dev, uint16_t sr_val, uint8_t sr_num)
 {
 	int ret = 0;
 	uint8_t opcode = SPI_NOR_CMD_WRSR;
+
+	uint8_t sr_array[2] = {0, 0};
+	sr_array[0] = (uint8_t) sr_val;
+	sr_array[1] = (uint8_t) (sr_val >> 8);
+
+	uint8_t length;
+	if ( sr_array[1] > 0) {
+		length = sizeof(sr_array);
+	} else {
+		length = sizeof(sr_array[0]);
+	}
 
 	if (sr_num > 2 || sr_num == 0) {
 		return -EINVAL;
@@ -439,8 +451,8 @@ static int qspi_wrsrX(const struct device *dev, uint8_t sr_val, uint8_t sr_num)
 	}
 
 	const struct qspi_buf sr_buf = {
-		.buf = &sr_val,
-		.len = sizeof(sr_val),
+		.buf = sr_array,
+		.len = length,
 	};
 	struct qspi_cmd cmd = {
 		.op_code = opcode,
@@ -577,7 +589,8 @@ static int qspi_nrfx_configure(const struct device *dev)
 			sr_num = 1;
 			qe_mask = BIT(6);
 		} else if (INST_0_QER == JESD216_DW15_QER_S2B1v4 ||
-				INST_0_QER == JESD216_DW15_QER_S2B1v6) {
+				INST_0_QER == JESD216_DW15_QER_S2B1v6 ||
+				INST_0_QER == JESD216_DW15_QER_S2B1v5) {
 			sr_num = 2;
 			qe_mask = BIT(1);
 		} else {
@@ -600,7 +613,23 @@ static int qspi_nrfx_configure(const struct device *dev)
 		ret = 0;
 		if (qe_state != qe_value) {
 			sr ^= qe_mask;
-			ret = qspi_wrsrX(dev, sr, sr_num);
+			uint16_t write_register = 0;
+			// This spec requires the values of both registers
+			// be sent in the write command. Read the value
+			// of the first register to pass as is.
+			if (INST_0_QER == JESD216_DW15_QER_S2B1v5) {
+				ret = qspi_rdsrX(dev, 1);
+				if (ret < 0) {
+					LOG_ERR("RDSR failed: %d", ret);
+					return ret;
+				}
+				write_register = (uint8_t)ret;
+				write_register |= (sr << 8);
+				sr_num = 1;
+			} else {
+				write_register |= sr;
+			}
+			ret = qspi_wrsrX(dev, write_register, sr_num);
 		}
 
 		if (ret < 0) {

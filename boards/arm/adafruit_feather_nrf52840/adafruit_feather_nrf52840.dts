@@ -107,7 +107,7 @@
 		has-dpd;
 		t-enter-dpd = <20000>;
 		t-exit-dpd = <20000>;
-                quad-enable-requirements = "S2B1v4";
+                quad-enable-requirements = "S2B1v5";
 	};
 };
 
