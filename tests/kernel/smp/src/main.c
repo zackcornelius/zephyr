@@ -4,12 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <zephyr.h>
-#include <tc_util.h>
-#include <ztest.h>
-#include <kernel.h>
+#include <zephyr/tc_util.h>
+#include <zephyr/ztest.h>
+#include <zephyr/kernel.h>
 #include <ksched.h>
-#include <kernel_structs.h>
+#include <zephyr/kernel_structs.h>
 
 #if CONFIG_MP_NUM_CPUS < 2
 #error SMP test requires at least two CPUs!
@@ -66,7 +65,7 @@ static int curr_cpu(void)
 }
 
 /**
- * @brief Tests for SMP
+ * @brief SMP
  * @defgroup kernel_smp_tests SMP Tests
  * @ingroup all_tests
  * @{
@@ -74,15 +73,15 @@ static int curr_cpu(void)
  */
 
 /**
- * @defgroup kernel_smp_integration_tests SMP Tests
- * @ingroup all_tests
+ * @defgroup kernel_smp_integration_tests SMP Integration Tests
+ * @ingroup kernel_smp_tests
  * @{
  * @}
  */
 
 /**
- * @defgroup kernel_smp_module_tests SMP Tests
- * @ingroup all_tests
+ * @defgroup kernel_smp_module_tests SMP Module Tests
+ * @ingroup kernel_smp_tests
  * @{
  * @}
  */
@@ -116,9 +115,17 @@ static void t2_fn(void *a, void *b, void *c)
  * @details Multi processing is verified by checking whether
  * 2 cooperative threads run simultaneously at different cores
  */
-void test_smp_coop_threads(void)
+ZTEST(smp, test_smp_coop_threads)
 {
 	int i, ok = 1;
+
+	if (!IS_ENABLED(CONFIG_SCHED_IPI_SUPPORTED)) {
+		/* The spawned thread enters an infinite loop, so it can't be
+		 * successfully aborted via an IPI.  Just skip in that
+		 * configuration.
+		 */
+		ztest_test_skip();
+	}
 
 	k_tid_t tid = k_thread_create(&t2, t2_stack, T2_STACK_SIZE, t2_fn,
 				      NULL, NULL, NULL,
@@ -145,6 +152,7 @@ void test_smp_coop_threads(void)
 	}
 
 	k_thread_abort(tid);
+	k_thread_join(tid, K_FOREVER);
 	zassert_true(ok, "SMP test failed");
 }
 
@@ -169,7 +177,7 @@ static void child_fn(void *p1, void *p2, void *p3)
  * @details Verify whether thread running on other core is
  * parent thread from child thread
  */
-void test_cpu_id_threads(void)
+ZTEST(smp, test_cpu_id_threads)
 {
 	/* Make sure idle thread runs on each core */
 	k_sleep(K_MSEC(1000));
@@ -185,6 +193,7 @@ void test_cpu_id_threads(void)
 	k_sem_take(&cpuid_sema, K_FOREVER);
 
 	k_thread_abort(tid);
+	k_thread_join(tid, K_FOREVER);
 }
 
 static void thread_entry(void *p1, void *p2, void *p3)
@@ -246,6 +255,10 @@ static void abort_threads(int num)
 	for (int i = 0; i < num; i++) {
 		k_thread_abort(tinfo[i].tid);
 	}
+
+	for (int i = 0; i < num; i++) {
+		k_thread_join(tinfo[i].tid, K_FOREVER);
+	}
 }
 
 static void cleanup_resources(void)
@@ -267,7 +280,7 @@ static void cleanup_resources(void)
  * Check if the last thread created preempts any threads
  * already running.
  */
-void test_coop_resched_threads(void)
+ZTEST(smp, test_coop_resched_threads)
 {
 	/* Spawn threads equal to number of cores,
 	 * since we don't give up current CPU, last thread
@@ -306,7 +319,7 @@ void test_coop_resched_threads(void)
  * on another core and verify if it gets preempted
  * if another thread of higher priority is spawned
  */
-void test_preempt_resched_threads(void)
+ZTEST(smp, test_preempt_resched_threads)
 {
 	/* Spawn threads  equal to number of cores,
 	 * lower priority thread should
@@ -337,7 +350,7 @@ void test_preempt_resched_threads(void)
  * yield() from main thread. Now, all threads must be
  * executed
  */
-void test_yield_threads(void)
+ZTEST(smp, test_yield_threads)
 {
 	/* Spawn threads equal to the number
 	 * of cores, so the last thread would be
@@ -368,7 +381,7 @@ void test_yield_threads(void)
  * sleep() from main thread. After timeout, all
  * threads has to be scheduled.
  */
-void test_sleep_threads(void)
+ZTEST(smp, test_sleep_threads)
 {
 	spawn_threads(K_PRIO_COOP(10), THREADS_NUM, !EQUAL_PRIORITY,
 		      &thread_entry, !THREAD_DELAY);
@@ -448,7 +461,7 @@ static void check_wokeup_threads(int tnum)
  * wakeup() of those threads from parent thread and check
  * if they are all running
  */
-void test_wakeup_threads(void)
+ZTEST(smp, test_wakeup_threads)
 {
 	/* Spawn threads to run on all remaining cores */
 	spawn_threads(K_PRIO_COOP(10), THREADS_NUM - 1, !EQUAL_PRIORITY,
@@ -536,22 +549,32 @@ static void thread_get_cpu_entry(void *p1, void *p2, void *p3)
  *
  * @see arch_curr_cpu()
  */
-void test_get_cpu(void)
+static int _cpu_id;
+ZTEST(smp, test_get_cpu)
 {
 	k_tid_t thread_id;
 
+	if (!IS_ENABLED(CONFIG_SCHED_IPI_SUPPORTED)) {
+		/* The spawned thread enters an infinite loop, so it can't be
+		 * successfully aborted via an IPI.  Just skip in that
+		 * configuration.
+		 */
+		ztest_test_skip();
+	}
+
 	/* get current cpu number */
-	int cpu_id = arch_curr_cpu()->id;
+	_cpu_id = arch_curr_cpu()->id;
 
 	thread_id = k_thread_create(&t2, t2_stack, T2_STACK_SIZE,
 				      (k_thread_entry_t)thread_get_cpu_entry,
-				      &cpu_id, NULL, NULL,
+				      &_cpu_id, NULL, NULL,
 				      K_PRIO_COOP(2),
 				      K_INHERIT_PERMS, K_NO_WAIT);
 
 	k_busy_wait(DELAY_US);
 
 	k_thread_abort(thread_id);
+	k_thread_join(thread_id, K_FOREVER);
 }
 
 #ifdef CONFIG_TRACE_SCHED_IPI
@@ -608,7 +631,8 @@ void z_trace_sched_ipi(void)
  *
  * @see arch_sched_ipi()
  */
-void test_smp_ipi(void)
+#ifdef CONFIG_SCHED_IPI_SUPPORTED
+ZTEST(smp, test_smp_ipi)
 {
 #ifndef CONFIG_TRACE_SCHED_IPI
 	ztest_test_skip();
@@ -633,8 +657,9 @@ void test_smp_ipi(void)
 				sched_ipi_has_called);
 	}
 }
+#endif
 
-void k_sys_fatal_error_handler(unsigned int reason, const z_arch_esf_t *pEsf)
+void k_sys_fatal_error_handler(unsigned int reason, const z_arch_esf_t *esf)
 {
 	static int trigger;
 
@@ -670,7 +695,7 @@ void entry_oops(void *p1, void *p2, void *p3)
  *
  * @ingroup kernel_common_tests
  */
-void test_fatal_on_smp(void)
+ZTEST(smp, test_fatal_on_smp)
 {
 	/* Creat a child thread and trigger a crash */
 	k_thread_create(&t2, t2_stack, T2_STACK_SIZE, entry_oops,
@@ -700,7 +725,7 @@ static void workq_handler(struct k_work *work)
  *
  * @ingroup kernel_common_tests
  */
-void test_workq_on_smp(void)
+ZTEST(smp, test_workq_on_smp)
 {
 	static struct k_work work;
 
@@ -713,7 +738,7 @@ void test_workq_on_smp(void)
 	k_busy_wait(DELAY_US);
 
 	/* check work have finished */
-	zassert_equal(k_work_busy_get(&work), 0, NULL);
+	zassert_equal(k_work_busy_get(&work), 0);
 
 	main_thread_id = curr_cpu();
 
@@ -763,7 +788,7 @@ static void t2_mutex_lock(void *p1, void *p2, void *p3)
  * @details Validate the scenario that make the internal APIs of SMP
  * z_smp_release_global_lock() to be called.
  */
-void test_smp_release_global_lock(void)
+ZTEST(smp, test_smp_release_global_lock)
 {
 	k_mutex_init(&smutex);
 
@@ -937,7 +962,7 @@ static int run_concurrency(int type, void *func)
  * - Use semaphore
  * - Use mutex
  */
-void test_inc_concurrency(void)
+ZTEST(smp, test_inc_concurrency)
 {
 	/* increasing global var with irq lock */
 	zassert_true(run_concurrency(LOCK_IRQ, inc_global_cnt),
@@ -987,7 +1012,7 @@ static void signal_raise(void *arg0, void *arg1, void *arg2)
 	}
 }
 
-void test_smp_switch_torture(void)
+ZTEST(smp, test_smp_switch_torture)
 {
 	for (uintptr_t i = 0; i < THREADS_NUM; i++) {
 		k_poll_signal_init(&tsignal[i]);
@@ -1006,12 +1031,14 @@ void test_smp_switch_torture(void)
 	k_sleep(K_MSEC(SLEEP_MS_LONG));
 
 	k_thread_abort(&t2);
+	k_thread_join(&t2, K_FOREVER);
 	for (uintptr_t i = 0; i < THREADS_NUM; i++) {
 		k_thread_abort(&tthread[i]);
+		k_thread_join(&tthread[i], K_FOREVER);
 	}
 }
 
-void test_main(void)
+static void *smp_tests_setup(void)
 {
 	/* Sleep a bit to guarantee that both CPUs enter an idle
 	 * thread from which they can exit correctly to run the main
@@ -1019,21 +1046,7 @@ void test_main(void)
 	 */
 	k_sleep(K_MSEC(10));
 
-	ztest_test_suite(smp,
-			 ztest_unit_test(test_smp_coop_threads),
-			 ztest_unit_test(test_cpu_id_threads),
-			 ztest_unit_test(test_coop_resched_threads),
-			 ztest_unit_test(test_preempt_resched_threads),
-			 ztest_unit_test(test_yield_threads),
-			 ztest_unit_test(test_sleep_threads),
-			 ztest_unit_test(test_wakeup_threads),
-			 ztest_unit_test(test_smp_ipi),
-			 ztest_unit_test(test_get_cpu),
-			 ztest_unit_test(test_fatal_on_smp),
-			 ztest_unit_test(test_workq_on_smp),
-			 ztest_unit_test(test_smp_release_global_lock),
-			 ztest_unit_test(test_inc_concurrency),
-			 ztest_unit_test(test_smp_switch_torture)
-			 );
-	ztest_run_test_suite(smp);
+	return NULL;
 }
+
+ZTEST_SUITE(smp, NULL, smp_tests_setup, NULL, NULL, NULL);

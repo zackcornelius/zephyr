@@ -8,7 +8,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <bluetooth/l2cap.h>
+#include <zephyr/bluetooth/l2cap.h>
 
 enum l2cap_conn_list_action {
 	BT_L2CAP_CHAN_LOOKUP,
@@ -209,6 +209,8 @@ struct bt_l2cap_ecred_conn_rsp {
 	uint16_t dcid[0];
 } __packed;
 
+#define L2CAP_ECRED_CHAN_MAX_PER_REQ 5
+
 #define BT_L2CAP_ECRED_RECONF_REQ       0x19
 struct bt_l2cap_ecred_reconf_req {
 	uint16_t mtu;
@@ -251,6 +253,8 @@ struct bt_l2cap_br_fixed_chan {
 				.cid = _cid,			\
 				.accept = _accept,		\
 			}
+
+#define BR_CHAN(_ch) CONTAINER_OF(_ch, struct bt_l2cap_br_chan, chan)
 
 /* Notify L2CAP channels of a new connection */
 void bt_l2cap_connected(struct bt_conn *conn);
@@ -311,6 +315,9 @@ static inline int bt_l2cap_send(struct bt_conn *conn, uint16_t cid,
 	return bt_l2cap_send_cb(conn, cid, buf, NULL, NULL);
 }
 
+int bt_l2cap_chan_send_cb(struct bt_l2cap_chan *chan, struct net_buf *buf, bt_conn_tx_cb_t cb,
+			  void *user_data);
+
 /* Receive a new L2CAP PDU from a connection */
 void bt_l2cap_recv(struct bt_conn *conn, struct net_buf *buf, bool complete);
 
@@ -351,6 +358,8 @@ int bt_l2cap_br_chan_connect(struct bt_conn *conn, struct bt_l2cap_chan *chan,
 
 /* Send packet data to connected peer */
 int bt_l2cap_br_chan_send(struct bt_l2cap_chan *chan, struct net_buf *buf);
+int bt_l2cap_br_chan_send_cb(struct bt_l2cap_chan *chan, struct net_buf *buf, bt_conn_tx_cb_t cb,
+			     void *user_data);
 
 /*
  * Handle security level changed on link passing HCI status of performed
@@ -363,9 +372,8 @@ void bt_l2cap_br_recv(struct bt_conn *conn, struct net_buf *buf);
 
 struct bt_l2cap_ecred_cb {
 	void (*ecred_conn_rsp)(struct bt_conn *conn, uint16_t result, uint8_t attempted,
-			       uint8_t succeeded);
-	void (*ecred_conn_req)(struct bt_conn *conn, uint16_t result, uint8_t attempted,
-			       uint8_t succeeded);
+			       uint8_t succeeded, uint16_t psm);
+	void (*ecred_conn_req)(struct bt_conn *conn, uint16_t result, uint16_t psm);
 };
 
 /* Register callbacks for Enhanced Credit based Flow Control */

@@ -17,9 +17,19 @@ config MM_DRV_PAGE_SIZE
 	help
 	  Size of memory pages.
 
+config MM_DRV_INTEL_ADSP_MTL_TLB
+	bool "Intel Audio DSP TLB Driver for Meteor Lake"
+	default y
+	depends on DT_HAS_INTEL_ADSP_MTL_TLB_ENABLED
+	imply SYS_MEM_BLOCKS
+	help
+	  Driver for the translation lookup buffer on
+	  Intel Audio DSP hardware (Meteor Lake).
+
 config MM_DRV_INTEL_ADSP_TLB
 	bool "Intel Audio DSP TLB Driver"
-	depends on SOC_FAMILY_INTEL_ADSP
+	default y
+	depends on DT_HAS_INTEL_ADSP_TLB_ENABLED
 	help
 	  Driver for the translation lookup buffer on
 	  Intel Audio DSP hardware.

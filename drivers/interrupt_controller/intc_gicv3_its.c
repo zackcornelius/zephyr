@@ -4,12 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <logging/log.h>
+#include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(intc_gicv3_its, LOG_LEVEL_ERR);
 
-#include <kernel.h>
-#include <device.h>
-#include <drivers/interrupt_controller/gicv3_its.h>
+#include <zephyr/kernel.h>
+#include <zephyr/device.h>
+#include <zephyr/drivers/interrupt_controller/gicv3_its.h>
 
 #include "intc_gic_common_priv.h"
 #include "intc_gicv3_priv.h"
@@ -561,9 +561,16 @@ static unsigned int gicv3_its_alloc_intid(const struct device *dev)
 	return atomic_inc(&nlpi_intid);
 }
 
+static uint32_t gicv3_its_get_msi_addr(const struct device *dev)
+{
+	const struct gicv3_its_config *cfg = (const struct gicv3_its_config *)dev->config;
+
+	return cfg->base_addr + GITS_TRANSLATER;
+}
+
 #define ITS_RDIST_MAP(n)									  \
 	{											  \
-		const struct device *dev = DEVICE_DT_INST_GET(n);				  \
+		const struct device *const dev = DEVICE_DT_INST_GET(n);				  \
 		struct gicv3_its_data *data;							  \
 		int ret;									  \
 												  \
@@ -586,7 +593,7 @@ void its_rdist_map(void)
 
 #define ITS_RDIST_INVALL(n)									\
 	{											\
-		const struct device *dev = DEVICE_DT_INST_GET(n);				\
+		const struct device *const dev = DEVICE_DT_INST_GET(n);				\
 		struct gicv3_its_data *data;							\
 		int ret;									\
 												\
@@ -651,6 +658,7 @@ struct its_driver_api gicv3_its_api = {
 	.setup_deviceid = gicv3_its_init_device_id,
 	.map_intid = gicv3_its_map_intid,
 	.send_int = gicv3_its_send_int,
+	.get_msi_addr = gicv3_its_get_msi_addr,
 };
 
 #define GICV3_ITS_INIT(n)						       \

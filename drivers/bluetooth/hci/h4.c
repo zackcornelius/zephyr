@@ -9,18 +9,18 @@
 #include <errno.h>
 #include <stddef.h>
 
-#include <zephyr.h>
-#include <arch/cpu.h>
+#include <zephyr/kernel.h>
+#include <zephyr/arch/cpu.h>
 
-#include <init.h>
-#include <drivers/uart.h>
-#include <sys/util.h>
-#include <sys/byteorder.h>
+#include <zephyr/init.h>
+#include <zephyr/drivers/uart.h>
+#include <zephyr/sys/util.h>
+#include <zephyr/sys/byteorder.h>
 #include <string.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <drivers/bluetooth/hci_driver.h>
+#include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/hci.h>
+#include <zephyr/drivers/bluetooth/hci_driver.h>
 
 #define BT_DBG_ENABLED IS_ENABLED(CONFIG_BT_DEBUG_HCI_DRIVER)
 #define LOG_MODULE_NAME bt_driver
@@ -69,7 +69,7 @@ static struct {
 	.fifo = Z_FIFO_INITIALIZER(tx.fifo),
 };
 
-static const struct device *h4_dev;
+static const struct device *const h4_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_bt_uart));
 
 static inline void h4_get_type(void)
 {
@@ -340,7 +340,8 @@ static inline void read_payload(void)
 
 	reset_rx();
 
-	if (evt_flags & BT_HCI_EVT_FLAG_RECV_PRIO) {
+	if (IS_ENABLED(CONFIG_BT_RECV_BLOCKING) &&
+	    (evt_flags & BT_HCI_EVT_FLAG_RECV_PRIO)) {
 		BT_DBG("Calling bt_recv_prio(%p)", buf);
 		bt_recv_prio(buf);
 	}
@@ -557,9 +558,8 @@ static int bt_uart_init(const struct device *unused)
 {
 	ARG_UNUSED(unused);
 
-	h4_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_bt_uart));
 	if (!device_is_ready(h4_dev)) {
-		return -EINVAL;
+		return -ENODEV;
 	}
 
 	bt_hci_driver_register(&drv);

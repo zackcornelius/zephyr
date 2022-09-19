@@ -10,27 +10,27 @@
 #define LOG_MODULE_NAME eth_stm32_hal
 #define LOG_LEVEL CONFIG_ETHERNET_LOG_LEVEL
 
-#include <logging/log.h>
+#include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
-#include <kernel.h>
-#include <device.h>
-#include <sys/__assert.h>
-#include <sys/util.h>
+#include <zephyr/kernel.h>
+#include <zephyr/device.h>
+#include <zephyr/sys/__assert.h>
+#include <zephyr/sys/util.h>
 #include <errno.h>
 #include <stdbool.h>
-#include <net/net_pkt.h>
-#include <net/net_if.h>
-#include <net/ethernet.h>
+#include <zephyr/net/net_pkt.h>
+#include <zephyr/net/net_if.h>
+#include <zephyr/net/ethernet.h>
 #include <ethernet/eth_stats.h>
 #include <soc.h>
-#include <sys/printk.h>
-#include <drivers/clock_control.h>
-#include <drivers/clock_control/stm32_clock_control.h>
-#include <drivers/pinctrl.h>
+#include <zephyr/sys/printk.h>
+#include <zephyr/drivers/clock_control.h>
+#include <zephyr/drivers/clock_control/stm32_clock_control.h>
+#include <zephyr/drivers/pinctrl.h>
 
 #if defined(CONFIG_PTP_CLOCK_STM32_HAL)
-#include <drivers/ptp_clock.h>
+#include <zephyr/drivers/ptp_clock.h>
 #endif /* CONFIG_PTP_CLOCK_STM32_HAL */
 
 #include "eth.h"
@@ -86,8 +86,8 @@ LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
 static ETH_DMADescTypeDef dma_rx_desc_tab[ETH_RXBUFNB] __eth_stm32_desc;
 static ETH_DMADescTypeDef dma_tx_desc_tab[ETH_TXBUFNB] __eth_stm32_desc;
-static uint8_t dma_rx_buffer[ETH_RXBUFNB][ETH_RX_BUF_SIZE] __eth_stm32_buf;
-static uint8_t dma_tx_buffer[ETH_TXBUFNB][ETH_TX_BUF_SIZE] __eth_stm32_buf;
+static uint8_t dma_rx_buffer[ETH_RXBUFNB][ETH_STM32_RX_BUF_SIZE] __eth_stm32_buf;
+static uint8_t dma_tx_buffer[ETH_TXBUFNB][ETH_STM32_TX_BUF_SIZE] __eth_stm32_buf;
 
 #if defined(CONFIG_SOC_SERIES_STM32H7X)
 static ETH_TxPacketConfig tx_config;
@@ -194,7 +194,7 @@ static int eth_tx(const struct device *dev, struct net_pkt *pkt)
 	k_mutex_lock(&dev_data->tx_mutex, K_FOREVER);
 
 	total_len = net_pkt_get_len(pkt);
-	if (total_len > ETH_TX_BUF_SIZE) {
+	if (total_len > ETH_STM32_TX_BUF_SIZE) {
 		LOG_ERR("PKT too big");
 		res = -EIO;
 		goto error;
@@ -786,6 +786,11 @@ static int eth_initialize(const struct device *dev)
 
 	dev_data->clock = DEVICE_DT_GET(STM32_CLOCK_CONTROL_NODE);
 
+	if (!device_is_ready(dev_data->clock)) {
+		LOG_ERR("clock control device not ready");
+		return -ENODEV;
+	}
+
 	/* enable clock */
 	ret = clock_control_on(dev_data->clock,
 		(clock_control_subsys_t *)&cfg->pclken);
@@ -820,7 +825,7 @@ static int eth_initialize(const struct device *dev)
 #if defined(CONFIG_SOC_SERIES_STM32H7X)
 	heth->Init.TxDesc = dma_tx_desc_tab;
 	heth->Init.RxDesc = dma_rx_desc_tab;
-	heth->Init.RxBuffLen = ETH_RX_BUF_SIZE;
+	heth->Init.RxBuffLen = ETH_STM32_RX_BUF_SIZE;
 #endif /* CONFIG_SOC_SERIES_STM32H7X */
 
 	hal_ret = HAL_ETH_Init(heth);
@@ -841,7 +846,7 @@ static int eth_initialize(const struct device *dev)
 #if defined(CONFIG_SOC_SERIES_STM32H7X)
 	heth->Instance->MACTSCR |= ETH_MACTSCR_TSENALL;
 #else
-	heth->Instance->PTPTSCR |= ETH_PTPTSSR_TSSARFE;
+	heth->Instance->PTPTSCR |= ETH_PTPTSCR_TSSARFE;
 #endif /* CONFIG_SOC_SERIES_STM32H7X */
 #endif /* CONFIG_PTP_CLOCK_STM32_HAL */
 
@@ -1132,7 +1137,7 @@ static int ptp_clock_stm32_set(const struct device *dev,
 	struct ptp_context *ptp_context = dev->data;
 	struct eth_stm32_hal_dev_data *eth_dev_data = ptp_context->eth_dev_data;
 	ETH_HandleTypeDef *heth = &eth_dev_data->heth;
-	int key;
+	unsigned int key;
 
 	key = irq_lock();
 
@@ -1163,7 +1168,7 @@ static int ptp_clock_stm32_get(const struct device *dev,
 	struct ptp_context *ptp_context = dev->data;
 	struct eth_stm32_hal_dev_data *eth_dev_data = ptp_context->eth_dev_data;
 	ETH_HandleTypeDef *heth = &eth_dev_data->heth;
-	int key;
+	unsigned int key;
 	uint32_t second_2;
 
 	key = irq_lock();
@@ -1296,7 +1301,7 @@ static const struct ptp_clock_driver_api api = {
 
 static int ptp_stm32_init(const struct device *port)
 {
-	const struct device *dev = DEVICE_DT_GET(DT_NODELABEL(mac));
+	const struct device *const dev = DEVICE_DT_GET(DT_NODELABEL(mac));
 	struct eth_stm32_hal_dev_data *eth_dev_data = dev->data;
 	const struct eth_stm32_hal_dev_cfg *eth_cfg = dev->config;
 	struct ptp_context *ptp_context = port->data;
@@ -1390,7 +1395,7 @@ static int ptp_stm32_init(const struct device *port)
 #if defined(CONFIG_SOC_SERIES_STM32H7X)
 	heth->Instance->MACTSCR |= ETH_MACTSCR_TSCTRLSSR;
 #else
-	heth->Instance->PTPTSCR |= ETH_PTPTSSR_TSSSR;
+	heth->Instance->PTPTSCR |= ETH_PTPTSCR_TSSSR;
 #endif /* CONFIG_SOC_SERIES_STM32H7X */
 
 	/* Initialize timestamp */

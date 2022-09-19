@@ -21,7 +21,7 @@ menuconfig THREAD_ANALYZER
 if THREAD_ANALYZER
 module = THREAD_ANALYZER
 module-str = thread analyzer
-source "${ZEPHYR_BASE}/subsys/logging/Kconfig.template.log_config"
+source "subsys/logging/Kconfig.template.log_config"
 
 choice
 	prompt "Thread analysis print mode"
@@ -99,6 +99,13 @@ config DEBUG
 	  only disables optimization, more debugging variants can be selected
 	  from here to allow more debugging.
 
+config GPROF
+	bool "Generate profiling information"
+	depends on ARCH_POSIX
+	help
+	  Generate call graph profile data for the application that can be
+	  analyzed with gprof
+
 config ASAN
 	bool "Build with address sanitizer"
 	depends on ARCH_POSIX
@@ -112,6 +119,18 @@ config ASAN
 	  GCC is used due to potential risk of a deadlock in libasan.
 	  This behavior can be changes by adding leak_check_at_exit=1 to the
 	  environment variable ASAN_OPTIONS.
+
+config ASAN_RECOVER
+	bool "Continue after sanitizer errors"
+	depends on ASAN
+	default y
+	help
+	  The default behavior of compiler sanitizers is to exit after
+	  the first error.  Set this to y to enable the code to
+	  continue, which can be useful if a code base has known
+	  unsuppressed errors.  You will also need to set
+	  "halt_on_error=0" in your ASAN_OPTIONS environment variable
+	  at runtime.
 
 config ASAN_NOP_DLCLOSE
 	bool "Override host OS dlclose() with a NOP"
@@ -134,6 +153,18 @@ config UBSAN
 	  This is currently only supported by boards based on the posix
 	  architecture, and requires a recent-ish compiler with the
 	  ``-fsanitize=undefined`` command line option.
+
+config MSAN
+	bool "Build with memory sanitizer"
+	depends on ARCH_POSIX
+	help
+	  Builds Zephyr with the LLVM MemorySanitizer enabled.  Works
+	  only on the posix architecture currently, and only with host
+	  compilers recent enough to support the feature (currently
+	  clang on x86_64 only).  It cannot be used in tandem with
+	  CONFIG_ASAN due to clang limitations.  You must choose one
+	  or the other (but can combine it with CONFIG_UBSAN if you
+	  like)
 
 config STACK_USAGE
 	bool "Generate stack usage information"
@@ -206,14 +237,6 @@ config ASSERT
 	  Disabling this option will cause assertions to compile to nothing,
 	  improving performance and system footprint.
 
-config FORCE_NO_ASSERT
-	bool "Force-disable no assertions"
-	help
-	  This boolean option disables Zephyr assertion testing even
-	  in circumstances (twister) where it is enabled via
-	  CFLAGS and not Kconfig.  Added solely to be able to work
-	  around compiler bugs for specific tests.
-
 if ASSERT
 
 config ASSERT_LEVEL
@@ -237,6 +260,16 @@ config SPIN_VALIDATE
 	  There's a spinlock validation framework available when asserts are
 	  enabled. It adds a relatively hefty overhead (about 3k or so) to
 	  kernel code size, don't use on platforms known to be small.
+
+endif # ASSERT
+
+config FORCE_NO_ASSERT
+	bool "Force-disable no assertions"
+	help
+	  This boolean option disables Zephyr assertion testing even
+	  in circumstances (twister) where it is enabled via
+	  CFLAGS and not Kconfig.  Added solely to be able to work
+	  around compiler bugs for specific tests.
 
 config ASSERT_VERBOSE
 	bool "Verbose assertions"
@@ -272,7 +305,14 @@ config ASSERT_NO_MSG_INFO
 	  before disabling file info since the message can be found in the
 	  source using file info.
 
-endif # ASSERT
+config ASSERT_TEST
+	bool "Assert test mode"
+	help
+	  This option enables the assert test mode, which allows the assert
+	  post action handler to return (i.e. not abort) when the asserted
+	  condition is false. The tests that validate the assert feature may
+	  select this option to allow the test to proceed by implementing a
+	  custom assert post action hook.
 
 config OVERRIDE_FRAME_POINTER_DEFAULT
 	bool "Override compiler defaults for -fomit-frame-pointer"
@@ -361,13 +401,6 @@ config GDBSTUB_SERIAL_BACKEND
 	  Use serial as backend for GDB
 
 endchoice
-
-config GDBSTUB_SERIAL_BACKEND_NAME
-	string "Serial Name"
-	depends on GDBSTUB_SERIAL_BACKEND
-	default "UART_0"
-	help
-	  Use serial as backend for GDB
 
 config GDBSTUB_BUF_SZ
 	int "GDB backend send/receive buffer size (in bytes)"

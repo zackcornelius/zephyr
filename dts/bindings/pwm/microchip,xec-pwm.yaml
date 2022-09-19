@@ -11,14 +11,14 @@ properties:
     reg:
       required: true
 
-    label:
-      required: true
-
     pcrs:
       type: array
       required: true
       description: PWM PCR register index and bit position
 
-pcr-cells:
-    - regidx
-    - bitpos
+    "#pwm-cells":
+      const: 2
+
+pwm-cells:
+    - channel
+    - period

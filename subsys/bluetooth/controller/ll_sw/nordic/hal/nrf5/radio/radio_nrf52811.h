@@ -389,9 +389,14 @@
 
 static inline void hal_radio_reset(void)
 {
-	/* Anomalies 102, 106 and 107 */
-	*(volatile uint32_t *)0x40001774 = ((*(volatile uint32_t *)0x40001774) &
-					 0xfffffffe) | 0x01000000;
+	/* TODO: Add any required setup for each radio event
+	 */
+}
+
+static inline void hal_radio_stop(void)
+{
+	/* TODO: Add any required cleanup of actions taken in hal_radio_reset()
+	 */
 }
 
 static inline void hal_radio_ram_prio_setup(void)

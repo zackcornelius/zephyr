@@ -4,6 +4,7 @@
 config ZTEST
 	bool "Zephyr testing framework"
 	select TEST
+	select OUTPUT_SYMBOLS
 	help
 	  Enable the Zephyr testing framework. You should enable this only
 	  if you're writing automated tests.
@@ -63,7 +64,6 @@ config ZTEST_RETEST_IF_PASSED
 
 config ZTEST_FATAL_HOOK
 	bool "Using a pre-defined fatal handler and hook function"
-	default n
 	help
 	  Use the pre-defined common fatal error handler and a post hook to
 	  do actions in your test case, this option often enabled when doing
@@ -72,7 +72,6 @@ config ZTEST_FATAL_HOOK
 
 config ZTEST_ASSERT_HOOK
 	bool "Using a pre-defined assert handler and hook function"
-	default n
 	help
 	  Use the pre-defined common assert fail handler and a post hook to
 	  do actions in your test case, this option often enabled when doing
@@ -99,7 +98,56 @@ config ZTEST_RULE_1CPU
 
 endmenu
 
+config ZTEST_VERIFY_RUN_ALL
+	bool "Validates all defined tests have ran"
+	default y
+	help
+	  This rule will fail the project if not all tests have been run.
+
+config ZTEST_SHUFFLE
+	bool "Shuffle the order of tests and suites"
+	select TEST_RANDOM_GENERATOR if !ENTROPY_HAS_DRIVER
+	help
+	  This rule will shuffle the order of tests and test suites.
+
+if ZTEST_SHUFFLE
+config ZTEST_SHUFFLE_SUITE_REPEAT_COUNT
+	int "Number of iterations the test suite will run"
+	default 3
+	help
+	  This rule will execute a test suite N number of times. The tests
+	  per suite will be shuffled on each iteration.  The test order will likely
+	  be different per iteration.
+
+config ZTEST_SHUFFLE_TEST_REPEAT_COUNT
+	int "Number of iterations the test will run"
+	default 3
+	help
+	  This rule will execute a test N number of times.  The test order will
+	  likely be different per iteration.
+
+endif #ZTEST_SHUFFLE
+
+config ZTEST_VERBOSE_OUTPUT
+	bool "Verbose test output"
+	default y
+	help
+	  This option controls whether test output is shown verbosely or
+	  no output at all.
+
+config ZTEST_VERBOSE_SUMMARY
+	bool "Verbose test summary"
+	default y
+	help
+	  This option controls whether suite summary is shown verbosely or
+	  just in one line.
+
 endif # ZTEST_NEW_API
+
+config TEST_LOGGING_FLUSH_AFTER_TEST
+	bool "When enabled logs are flushed after each test case"
+	default y
+	depends on MULTITHREADING
 
 endif # ZTEST
 

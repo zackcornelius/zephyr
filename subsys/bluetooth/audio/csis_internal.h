@@ -7,7 +7,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <bluetooth/audio/csis.h>
+#include <zephyr/bluetooth/audio/csis.h>
 
 
 #define BT_CSIS_SIRK_TYPE_ENCRYPTED             0x00
@@ -15,8 +15,6 @@
 
 #define BT_CSIS_RELEASE_VALUE                   0x01
 #define BT_CSIS_LOCK_VALUE                      0x02
-
-#define BT_CSIS_PSRI_SIZE                       6
 
 struct csis_pending_notifications {
 	bt_addr_le_t addr;
@@ -57,16 +55,16 @@ struct bt_csis_client_svc_inst {
 	struct bt_gatt_discover_params lock_sub_disc_params;
 
 	struct bt_conn *conn;
+	struct bt_csis_client_set_member *member;
 };
 
 /* TODO: Rename to bt_csis_svc_inst */
 struct bt_csis_server {
 	struct bt_csis_set_sirk set_sirk;
-	uint8_t psri[BT_CSIS_PSRI_SIZE];
 	uint8_t set_size;
 	uint8_t set_lock;
 	uint8_t rank;
-	bool adv_enabled;
+	struct bt_csis_cb *cb;
 	struct k_work_delayable set_lock_timer;
 	bt_addr_le_t lock_client_addr;
 	struct bt_gatt_service *service_p;
@@ -74,12 +72,6 @@ struct bt_csis_server {
 #if IS_ENABLED(CONFIG_BT_KEYS_OVERWRITE_OLDEST)
 	uint32_t age_counter;
 #endif /* CONFIG_BT_KEYS_OVERWRITE_OLDEST */
-#if defined(CONFIG_BT_EXT_ADV)
-	uint8_t conn_cnt;
-	struct bt_le_ext_adv *adv;
-	struct bt_le_ext_adv_cb adv_cb;
-	struct k_work work;
-#endif /* CONFIG_BT_EXT_ADV */
 };
 
 struct bt_csis {

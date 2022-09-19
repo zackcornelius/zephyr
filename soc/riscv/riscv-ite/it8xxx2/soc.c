@@ -5,16 +5,15 @@
  *
  */
 
-#include <arch/riscv/csr.h>
-#include <kernel.h>
-#include <device.h>
-#include <init.h>
+#include <zephyr/arch/riscv/csr.h>
+#include <zephyr/kernel.h>
+#include <zephyr/device.h>
+#include <zephyr/init.h>
 #include <soc.h>
 #include "soc_espi.h"
-#include <dt-bindings/interrupt-controller/ite-intc.h>
+#include <zephyr/dt-bindings/interrupt-controller/ite-intc.h>
 
 #ifdef CONFIG_SOC_IT8XXX2_PLL_FLASH_48M
-#define __intc_ram_code __attribute__((section(".__ram_code")))
 
 struct pll_config_t {
 	uint8_t pll_freq;
@@ -87,7 +86,7 @@ uint32_t chip_get_pll_freq(void)
 	return pllfreq;
 }
 
-void __intc_ram_code chip_pll_ctrl(enum chip_pll_mode mode)
+void __soc_ram_code chip_pll_ctrl(enum chip_pll_mode mode)
 {
 	volatile uint8_t _pll_ctrl __unused;
 
@@ -100,7 +99,7 @@ void __intc_ram_code chip_pll_ctrl(enum chip_pll_mode mode)
 	_pll_ctrl = IT8XXX2_ECPM_PLLCTRL;
 }
 
-void __intc_ram_code chip_run_pll_sequence(const struct pll_config_t *pll)
+void __soc_ram_code chip_run_pll_sequence(const struct pll_config_t *pll)
 {
 	/* Enable HW timer to wakeup chip from the sleep mode */
 	timer_5ms_one_shot();
@@ -176,41 +175,78 @@ BUILD_ASSERT(CONFIG_FLASH_INIT_PRIORITY < CONFIG_IT8XXX2_PLL_SEQUENCE_PRIORITY,
 	"CONFIG_FLASH_INIT_PRIORITY must be less than CONFIG_IT8XXX2_PLL_SEQUENCE_PRIORITY");
 #endif /* CONFIG_SOC_IT8XXX2_PLL_FLASH_48M */
 
-extern volatile int wait_interrupt_fired;
+#ifdef CONFIG_SOC_IT8XXX2_CPU_IDLE_GATING
+/* Preventing CPU going into idle mode during command queue. */
+static atomic_t cpu_idle_disabled;
 
+void chip_permit_idle(void)
+{
+	atomic_dec(&cpu_idle_disabled);
+}
+
+void chip_block_idle(void)
+{
+	atomic_inc(&cpu_idle_disabled);
+}
+
+bool cpu_idle_not_allowed(void)
+{
+	return !!(atomic_get(&cpu_idle_disabled));
+}
+#endif
+
+/* The routine must be called with interrupts locked */
 void riscv_idle(enum chip_pll_mode mode, unsigned int key)
 {
-	/* Disable M-mode external interrupt */
+	/*
+	 * The routine is called with interrupts locked (in kernel/idle()).
+	 * But on kernel/context test_kernel_cpu_idle test, the routine will be
+	 * called without interrupts locked. Hence we disable M-mode external
+	 * interrupt here to protect the below content.
+	 */
 	csr_clear(mie, MIP_MEIP);
-
 	sys_trace_idle();
 	/* Chip doze after wfi instruction */
 	chip_pll_ctrl(mode);
-	/* Set flag before entering low power mode. */
-	wait_interrupt_fired = 1;
-	/* unlock interrupts */
-	irq_unlock(key);
-	/* Wait for interrupt */
-	__asm__ volatile ("wfi");
 
-	/* Enable M-mode external interrupt */
-	csr_set(mie, MIP_MEIP);
-	/*
-	 * Sometimes wfi instruction may fail due to CPU's MTIP@mip
-	 * register is non-zero.
-	 * If the wait_interrupt_fired flag is true at this point,
-	 * it means that EC waked-up by the above issue not an
-	 * interrupt. Hence we loop running wfi instruction here until
-	 * wfi success.
-	 */
-	while (wait_interrupt_fired) {
+	do {
+		/* Wait for interrupt */
 		__asm__ volatile ("wfi");
-	}
+		/*
+		 * Sometimes wfi instruction may fail due to CPU's MTIP@mip
+		 * register is non-zero.
+		 * If the ite_intc_no_irq() is true at this point,
+		 * it means that EC waked-up by the above issue not an
+		 * interrupt. Hence we loop running wfi instruction here until
+		 * wfi success.
+		 */
+	} while (ite_intc_no_irq());
+
+	/*
+	 * Enable M-mode external interrupt
+	 * An interrupt can not be fired yet until we enable global interrupt
+	 */
+	csr_set(mie, MIP_MEIP);
+	/* Restore global interrupt lockout state */
+	irq_unlock(key);
 }
 
 void arch_cpu_idle(void)
 {
-	riscv_idle(CHIP_PLL_DOZE, MSTATUS_IEN);
+#ifdef CONFIG_SOC_IT8XXX2_CPU_IDLE_GATING
+	/*
+	 * The EC processor(CPU) cannot be in the k_cpu_idle() during
+	 * the transactions with the CQ mode(DMA mode). Otherwise,
+	 * the EC processor would be clock gated.
+	 */
+	if (cpu_idle_not_allowed()) {
+		/* Restore global interrupt lockout state */
+		irq_unlock(MSTATUS_IEN);
+	} else
+#endif
+	{
+		riscv_idle(CHIP_PLL_DOZE, MSTATUS_IEN);
+	}
 }
 
 void arch_cpu_atomic_idle(unsigned int key)
@@ -266,6 +302,47 @@ static int ite_it8xxx2_init(const struct device *arg)
 	IT8XXX2_GPIO_GRC1 |= BIT(2);
 
 #endif /* DT_NODE_HAS_STATUS(DT_NODELABEL(uart2), okay) */
+
+#if (SOC_USBPD_ITE_PHY_PORT_COUNT > 0)
+	int port;
+
+	/*
+	 * To prevent cc pins leakage, we disable board not active ITE
+	 * TCPC port cc modules, then cc pins can be used as gpio if needed.
+	 */
+	for (port = SOC_USBPD_ITE_ACTIVE_PORT_COUNT;
+	     port < SOC_USBPD_ITE_PHY_PORT_COUNT; port++) {
+		struct usbpd_it8xxx2_regs *base;
+
+		if (port == 0) {
+			base = (struct usbpd_it8xxx2_regs *)DT_REG_ADDR(DT_NODELABEL(usbpd0));
+		} else if (port == 1) {
+			base = (struct usbpd_it8xxx2_regs *)DT_REG_ADDR(DT_NODELABEL(usbpd1));
+		} else {
+			/* Currently all ITE embedded pd chip support max two ports */
+			break;
+		}
+
+		/* Power down all CC, and disable CC voltage detector */
+		base->CCGCR |= (IT8XXX2_USBPD_DISABLE_CC |
+				IT8XXX2_USBPD_DISABLE_CC_VOL_DETECTOR);
+		/*
+		 * Disconnect CC analog module (ex.UP/RD/DET/TX/RX), and
+		 * disconnect CC 5.1K to GND
+		 */
+		base->CCCSR |= (IT8XXX2_USBPD_CC2_DISCONNECT |
+				IT8XXX2_USBPD_CC2_DISCONNECT_5_1K_TO_GND |
+				IT8XXX2_USBPD_CC1_DISCONNECT |
+				IT8XXX2_USBPD_CC1_DISCONNECT_5_1K_TO_GND);
+		/* Disconnect CC 5V tolerant */
+		base->CCPSR |= (IT8XXX2_USBPD_DISCONNECT_POWER_CC2 |
+				IT8XXX2_USBPD_DISCONNECT_POWER_CC1);
+		/* Dis-connect 5.1K dead battery resistor to CC */
+		base->CCPSR |= (IT8XXX2_USBPD_DISCONNECT_5_1K_CC2_DB |
+				IT8XXX2_USBPD_DISCONNECT_5_1K_CC1_DB);
+	}
+#endif /* (SOC_USBPD_ITE_PHY_PORT_COUNT > 0) */
+
 	return 0;
 }
 SYS_INIT(ite_it8xxx2_init, PRE_KERNEL_1, CONFIG_KERNEL_INIT_PRIORITY_DEFAULT);

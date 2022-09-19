@@ -7,22 +7,24 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <zephyr.h>
-#include <sys/byteorder.h>
+#include <zephyr/kernel.h>
+#include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/util.h>
 
-#include <device.h>
-#include <init.h>
+#include <zephyr/device.h>
+#include <zephyr/init.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/conn.h>
-#include <bluetooth/iso.h>
-#include <bluetooth/gatt.h>
-#include <bluetooth/buf.h>
+#include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/conn.h>
+#include <zephyr/bluetooth/iso.h>
+#include <zephyr/bluetooth/gatt.h>
+#include <zephyr/bluetooth/buf.h>
 
 #define BT_DBG_ENABLED IS_ENABLED(CONFIG_BT_DEBUG_BASS)
 #define LOG_MODULE_NAME bt_bass
 #include "common/log.h"
 
+#include "audio_internal.h"
 #include "bass_internal.h"
 #include "../host/conn_internal.h"
 #include "../host/hci_core.h"
@@ -440,7 +442,7 @@ static void biginfo_recv(struct bt_le_per_adv_sync *sync,
 {
 	struct bass_recv_state_internal *state = bass_lookup_pa_sync(sync);
 
-	if (state != NULL || state->biginfo_received) {
+	if (state == NULL || state->biginfo_received) {
 		return;
 	}
 
@@ -1223,7 +1225,7 @@ static ssize_t read_recv_state(struct bt_conn *conn,
 			       const struct bt_gatt_attr *attr, void *buf,
 			       uint16_t len, uint16_t offset)
 {
-	uint8_t idx = (uint8_t)(uintptr_t)attr->user_data;
+	uint8_t idx = POINTER_TO_UINT(BT_AUDIO_CHRC_USER_DATA(attr));
 	struct bass_recv_state_internal *recv_state = &bass_inst.recv_states[idx];
 	struct bt_bass_recv_state *state = &recv_state->state;
 
@@ -1244,19 +1246,18 @@ static ssize_t read_recv_state(struct bt_conn *conn,
 }
 
 #define RECEIVE_STATE_CHARACTERISTIC(idx) \
-	BT_GATT_CHARACTERISTIC(BT_UUID_BASS_RECV_STATE, \
-		BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,\
-		BT_GATT_PERM_READ_ENCRYPT, \
-		read_recv_state, NULL, (void *)idx), \
-	BT_GATT_CCC(recv_state_cfg_changed, \
-		BT_GATT_PERM_READ | BT_GATT_PERM_WRITE_ENCRYPT)
+	BT_AUDIO_CHRC(BT_UUID_BASS_RECV_STATE, \
+		      BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY,\
+		      BT_GATT_PERM_READ_ENCRYPT, \
+		      read_recv_state, NULL, UINT_TO_POINTER(idx)), \
+	BT_AUDIO_CCC(recv_state_cfg_changed)
 
 BT_GATT_SERVICE_DEFINE(bass_svc,
 	BT_GATT_PRIMARY_SERVICE(BT_UUID_BASS),
-	BT_GATT_CHARACTERISTIC(BT_UUID_BASS_CONTROL_POINT,
-		BT_GATT_CHRC_WRITE_WITHOUT_RESP | BT_GATT_CHRC_WRITE,
-		BT_GATT_PERM_WRITE_ENCRYPT,
-		NULL, write_control_point, NULL),
+	BT_AUDIO_CHRC(BT_UUID_BASS_CONTROL_POINT,
+		      BT_GATT_CHRC_WRITE_WITHOUT_RESP | BT_GATT_CHRC_WRITE,
+		      BT_GATT_PERM_WRITE_ENCRYPT,
+		      NULL, write_control_point, NULL),
 	RECEIVE_STATE_CHARACTERISTIC(0),
 #if CONFIG_BT_BASS_RECV_STATE_COUNT > 1
 	RECEIVE_STATE_CHARACTERISTIC(1),

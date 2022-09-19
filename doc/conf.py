@@ -82,6 +82,7 @@ extensions = [
     "zephyr.doxyrunner",
     "zephyr.vcs_link",
     "notfound.extension",
+    "sphinx_copybutton",
     "zephyr.external_content",
 ]
 
@@ -103,6 +104,26 @@ pygments_style = "sphinx"
 todo_include_todos = False
 
 numfig = True
+
+nitpick_ignore = [
+    # ignore C standard identifiers (they are not defined in Zephyr docs)
+    ("c:identifier", "FILE"),
+    ("c:identifier", "int8_t"),
+    ("c:identifier", "int16_t"),
+    ("c:identifier", "int32_t"),
+    ("c:identifier", "int64_t"),
+    ("c:identifier", "intptr_t"),
+    ("c:identifier", "off_t"),
+    ("c:identifier", "size_t"),
+    ("c:identifier", "ssize_t"),
+    ("c:identifier", "time_t"),
+    ("c:identifier", "uint8_t"),
+    ("c:identifier", "uint16_t"),
+    ("c:identifier", "uint32_t"),
+    ("c:identifier", "uint64_t"),
+    ("c:identifier", "uintptr_t"),
+    ("c:identifier", "va_list"),
+]
 
 rst_epilog = """
 .. include:: /substitutions.txt
@@ -139,6 +160,7 @@ html_context = {
     "current_version": version,
     "versions": (
         ("latest", "/"),
+        ("3.1.0", "/3.1.0/"),
         ("3.0.0", "/3.0.0/"),
         ("2.7.0", "/2.7.0/"),
         ("2.6.0", "/2.6.0/"),
@@ -151,7 +173,7 @@ html_context = {
     "reference_links": {
         "API": f"{reference_prefix}/doxygen/html/index.html",
         "Kconfig Options": f"{reference_prefix}/kconfig.html",
-        "Devicetree Bindings": f"{reference_prefix}/reference/devicetree/bindings.html",
+        "Devicetree Bindings": f"{reference_prefix}/build/dts/api/bindings.html",
     }
 }
 
@@ -237,8 +259,8 @@ vcs_link_prefixes = {
 }
 vcs_link_exclude = [
     "reference/kconfig.*",
-    "reference/devicetree/bindings.*",
-    "reference/devicetree/compatibles.*",
+    "build/dts/api/bindings.*",
+    "build/dts/api/compatibles.*",
 ]
 
 # -- Options for zephyr.kconfig -------------------------------------------
@@ -257,9 +279,9 @@ external_content_contents = [
 ]
 external_content_keep = [
     "reference/kconfig/*",
-    "reference/devicetree/bindings.rst",
-    "reference/devicetree/bindings/**/*",
-    "reference/devicetree/compatibles/**/*",
+    "build/dts/api/bindings.rst",
+    "build/dts/api/bindings/**/*",
+    "build/dts/api/compatibles/**/*",
 ]
 
 # -- Options for sphinx.ext.graphviz --------------------------------------
@@ -278,8 +300,8 @@ graphviz_dot_args = [
 # -- Linkcheck options ----------------------------------------------------
 
 extlinks = {
-    "jira": ("https://jira.zephyrproject.org/browse/%s", ""),
-    "github": ("https://github.com/zephyrproject-rtos/zephyr/issues/%s", ""),
+    "jira": ("https://jira.zephyrproject.org/browse/%s", "JIRA #%s"),
+    "github": ("https://github.com/zephyrproject-rtos/zephyr/issues/%s", "GitHub #%s"),
 }
 
 linkcheck_timeout = 30

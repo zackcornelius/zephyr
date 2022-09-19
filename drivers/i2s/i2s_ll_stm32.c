@@ -7,18 +7,18 @@
 #define DT_DRV_COMPAT st_stm32_i2s
 
 #include <string.h>
-#include <drivers/dma.h>
-#include <drivers/i2s.h>
-#include <drivers/dma/dma_stm32.h>
+#include <zephyr/drivers/dma.h>
+#include <zephyr/drivers/i2s.h>
+#include <zephyr/drivers/dma/dma_stm32.h>
 #include <soc.h>
 #include <stm32_ll_rcc.h>
 #include <stm32_ll_spi.h>
-#include <drivers/clock_control/stm32_clock_control.h>
-#include <drivers/clock_control.h>
-#include <drivers/pinctrl.h>
+#include <zephyr/drivers/clock_control/stm32_clock_control.h>
+#include <zephyr/drivers/clock_control.h>
+#include <zephyr/drivers/pinctrl.h>
 
 #include "i2s_ll_stm32.h"
-#include <logging/log.h>
+#include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(i2s_ll_stm32);
 
 /* FIXME change to
@@ -101,6 +101,11 @@ static int i2s_stm32_enable_clock(const struct device *dev)
 	int ret;
 
 	clk = DEVICE_DT_GET(STM32_CLOCK_CONTROL_NODE);
+
+	if (!device_is_ready(clk)) {
+		LOG_ERR("clock control device not ready");
+		return -ENODEV;
+	}
 
 	ret = clock_control_on(clk, (clock_control_subsys_t *) &cfg->pclken);
 	if (ret != 0) {

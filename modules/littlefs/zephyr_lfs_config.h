@@ -21,7 +21,7 @@
 #include <stdlib.h>
 #endif
 #ifndef LFS_NO_ASSERT
-#include <sys/__assert.h>
+#include <zephyr/sys/__assert.h>
 #endif
 
 #if !defined(LFS_NO_DEBUG) || \
@@ -29,7 +29,7 @@
 	    !defined(LFS_NO_ERROR) || \
 	    defined(LFS_YES_TRACE)
 
-#include <logging/log.h>
+#include <zephyr/logging/log.h>
 
 #ifdef LFS_LOG_REGISTER
 LOG_MODULE_REGISTER(littlefs, CONFIG_FS_LOG_LEVEL);
@@ -46,22 +46,22 @@ extern "C"
 /* Logging functions when using LittleFS with Zephyr. */
 #ifndef LFS_TRACE
 #ifdef LFS_YES_TRACE
-#define LFS_TRACE(fmt, ...) LOG_DBG("%s:%d:trace: " fmt, __FILE__, __LINE__, __VA_ARGS__)
+#define LFS_TRACE(fmt, ...) LOG_DBG("%s:%d:trace: " fmt, __FILE__, __LINE__, ##__VA_ARGS__)
 #else
 #define LFS_TRACE(...)
 #endif
 #endif
 
 #ifndef LFS_DEBUG
-#define LFS_DEBUG(fmt, ...) LOG_DBG("%s:%d: " fmt, __FILE__, __LINE__, __VA_ARGS__)
+#define LFS_DEBUG(fmt, ...) LOG_DBG("%s:%d: " fmt, __FILE__, __LINE__, ##__VA_ARGS__)
 #endif
 
 #ifndef LFS_WARN
-#define LFS_WARN(fmt, ...) LOG_WRN("%s:%d: " fmt, __FILE__, __LINE__, __VA_ARGS__)
+#define LFS_WARN(fmt, ...) LOG_WRN("%s:%d: " fmt, __FILE__, __LINE__, ##__VA_ARGS__)
 #endif
 
 #ifndef LFS_ERROR
-#define LFS_ERROR(fmt, ...) LOG_ERR("%s:%d: " fmt, __FILE__, __LINE__, __VA_ARGS__)
+#define LFS_ERROR(fmt, ...) LOG_ERR("%s:%d: " fmt, __FILE__, __LINE__, ##__VA_ARGS__)
 #endif
 
 /* Runtime assertions */

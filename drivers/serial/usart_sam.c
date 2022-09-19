@@ -15,18 +15,19 @@
  */
 
 #include <errno.h>
-#include <sys/__assert.h>
-#include <device.h>
-#include <init.h>
+#include <zephyr/sys/__assert.h>
+#include <zephyr/device.h>
+#include <zephyr/init.h>
 #include <soc.h>
-#include <drivers/uart.h>
+#include <zephyr/drivers/uart.h>
+#include <zephyr/drivers/pinctrl.h>
 
 /* Device constant configuration parameters */
 struct usart_sam_dev_cfg {
 	Usart *regs;
 	uint32_t periph_id;
-	struct soc_gpio_pin pin_rx;
-	struct soc_gpio_pin pin_tx;
+	bool hw_flow_control;
+	const struct pinctrl_dev_config *pcfg;
 
 #ifdef CONFIG_UART_INTERRUPT_DRIVEN
 	uart_irq_config_func_t	irq_config_func;
@@ -53,13 +54,16 @@ static int usart_sam_init(const struct device *dev)
 	const struct usart_sam_dev_cfg *const cfg = dev->config;
 	struct usart_sam_dev_data *const dev_data = dev->data;
 	Usart *const usart = cfg->regs;
+	uint32_t us_mr;
 
 	/* Enable USART clock in PMC */
 	soc_pmc_peripheral_enable(cfg->periph_id);
 
 	/* Connect pins to the peripheral */
-	soc_gpio_configure(&cfg->pin_rx);
-	soc_gpio_configure(&cfg->pin_tx);
+	retval = pinctrl_apply_state(cfg->pcfg, PINCTRL_STATE_DEFAULT);
+	if (retval < 0) {
+		return retval;
+	}
 
 	/* Reset and disable USART */
 	usart->US_CR =   US_CR_RSTRX | US_CR_RSTTX
@@ -69,11 +73,17 @@ static int usart_sam_init(const struct device *dev)
 	usart->US_IDR = 0xFFFFFFFF;
 
 	/* 8 bits of data, no parity, 1 stop bit in normal mode */
-	usart->US_MR =   US_MR_NBSTOP_1_BIT
-		       | US_MR_PAR_NO
-		       | US_MR_CHRL_8_BIT
-		       | US_MR_USCLKS_MCK
-		       | US_MR_CHMODE_NORMAL;
+	us_mr = US_MR_NBSTOP_1_BIT
+	      | US_MR_PAR_NO
+	      | US_MR_CHRL_8_BIT
+	      | US_MR_USCLKS_MCK
+	      | US_MR_CHMODE_NORMAL;
+
+	if (cfg->hw_flow_control) {
+		us_mr |= US_MR_USART_MODE_HW_HANDSHAKING;
+	}
+
+	usart->US_MR = us_mr;
 
 	/* Set baud rate */
 	retval = baudrate_set(usart, dev_data->baud_rate,
@@ -356,9 +366,9 @@ static const struct uart_driver_api usart_sam_driver_api = {
 	static const struct usart_sam_dev_cfg usart##n##_sam_config = {	\
 		.regs = (Usart *)DT_INST_REG_ADDR(n),			\
 		.periph_id = DT_INST_PROP(n, peripheral_id),		\
+		.hw_flow_control = DT_INST_PROP(n, hw_flow_control),	\
 									\
-		.pin_rx = ATMEL_SAM_DT_INST_PIN(n, 0),			\
-		.pin_tx = ATMEL_SAM_DT_INST_PIN(n, 1),			\
+		.pcfg = PINCTRL_DT_INST_DEV_CONFIG_GET(n),		\
 									\
 		IRQ_FUNC_INIT						\
 	}
@@ -385,6 +395,7 @@ static const struct uart_driver_api usart_sam_driver_api = {
 #endif
 
 #define USART_SAM_INIT(n)						\
+	PINCTRL_DT_INST_DEFINE(n);					\
 	static struct usart_sam_dev_data usart##n##_sam_data = {	\
 		.baud_rate = DT_INST_PROP(n, current_speed),		\
 	};								\

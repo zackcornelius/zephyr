@@ -6,16 +6,16 @@
 
 #define DT_DRV_COMPAT st_stm32_ipcc_mailbox
 
-#include <drivers/clock_control.h>
-#include <device.h>
+#include <zephyr/drivers/clock_control.h>
+#include <zephyr/device.h>
 #include <errno.h>
-#include <drivers/ipm.h>
+#include <zephyr/drivers/ipm.h>
 #include <soc.h>
 #include <stm32_ll_ipcc.h>
 
-#include <drivers/clock_control/stm32_clock_control.h>
+#include <zephyr/drivers/clock_control/stm32_clock_control.h>
 
-#include <logging/log.h>
+#include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(ipm_stm32_ipcc, CONFIG_IPM_LOG_LEVEL);
 
 #define MBX_STRUCT(dev)					\
@@ -244,6 +244,11 @@ static int stm32_ipcc_mailbox_init(const struct device *dev)
 	uint32_t i;
 
 	clk = DEVICE_DT_GET(STM32_CLOCK_CONTROL_NODE);
+
+	if (!device_is_ready(clk)) {
+		LOG_ERR("clock control device not ready");
+		return -ENODEV;
+	}
 
 	/* enable clock */
 	if (clock_control_on(clk,

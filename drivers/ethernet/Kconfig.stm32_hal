@@ -4,11 +4,10 @@
 # Copyright (c) 2020 Alexander Kozhinov <AlexanderKozhinov@yandex.com>
 # SPDX-License-Identifier: Apache-2.0
 
-DT_COMPAT_ST_STM32_ETHERNET := st,stm32-ethernet
-
 menuconfig ETH_STM32_HAL
 	bool "STM32 HAL Ethernet driver"
-	default y if $(dt_compat_enabled,$(DT_COMPAT_ST_STM32_ETHERNET))
+	default y
+	depends on DT_HAS_ST_STM32_ETHERNET_ENABLED
 	select USE_STM32_HAL_ETH
 	select NOCACHE_MEMORY if SOC_SERIES_STM32H7X && CPU_CORTEX_M7
 	help
@@ -98,14 +97,12 @@ if !ETH_STM32_AUTO_NEGOTIATION_ENABLE
 
 config ETH_STM32_SPEED_10M
 	bool "Set speed to 10 Mbps when autonegotiation is disabled"
-	default n
 	help
 	  Set this if using 10 Mbps and when autonegotiation is disabled, otherwise speed
 	  is 100 Mbps
 
 config ETH_STM32_MODE_HALFDUPLEX
 	bool "Half duplex mode"
-	default n
 	help
 	  Set this if using half duplex when autonegotiation is disabled otherwise
 	  duplex mode is full duplex

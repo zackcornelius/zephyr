@@ -7,13 +7,13 @@
 #define DT_DRV_COMPAT silabs_gecko_spi_usart
 
 #define LOG_LEVEL CONFIG_SPI_LOG_LEVEL
-#include <logging/log.h>
+#include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(spi_gecko);
 #include "spi_context.h"
 
-#include <sys/sys_io.h>
-#include <device.h>
-#include <drivers/spi.h>
+#include <zephyr/sys/sys_io.h>
+#include <zephyr/device.h>
+#include <zephyr/drivers/spi.h>
 #include <soc.h>
 
 #include "em_cmu.h"
@@ -181,7 +181,7 @@ static void spi_gecko_xfer(const struct device *dev,
 	} while (!ret && spi_gecko_transfer_ongoing(data));
 
 	spi_context_cs_control(ctx, false);
-	spi_context_complete(ctx, 0);
+	spi_context_complete(ctx, dev, 0);
 }
 
 static void spi_gecko_init_pins(const struct device *dev)

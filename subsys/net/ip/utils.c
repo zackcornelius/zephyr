@@ -9,21 +9,21 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <logging/log.h>
+#include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(net_utils, CONFIG_NET_UTILS_LOG_LEVEL);
 
-#include <kernel.h>
+#include <zephyr/kernel.h>
 #include <stdlib.h>
-#include <syscall_handler.h>
+#include <zephyr/syscall_handler.h>
 #include <zephyr/types.h>
 #include <stdbool.h>
 #include <string.h>
 #include <errno.h>
 
-#include <net/net_ip.h>
-#include <net/net_pkt.h>
-#include <net/net_core.h>
-#include <net/socket_can.h>
+#include <zephyr/net/net_ip.h>
+#include <zephyr/net/net_pkt.h>
+#include <zephyr/net/net_core.h>
+#include <zephyr/net/socketcan.h>
 
 char *net_sprint_addr(sa_family_t af, const void *addr)
 {
@@ -234,7 +234,6 @@ char *z_impl_net_addr_ntop(sa_family_t family, const void *src,
 
 		if (needcolon) {
 			*ptr++ = ':';
-			needcolon = false;
 		}
 
 		value = (uint32_t)sys_be16_to_cpu(UNALIGNED_GET(&w[i]));
@@ -552,6 +551,7 @@ static inline uint16_t pkt_calc_chksum(struct net_pkt *pkt, uint16_t sum)
 	return sum;
 }
 
+#if defined(CONFIG_NET_IP)
 uint16_t net_calc_chksum(struct net_pkt *pkt, uint8_t proto)
 {
 	size_t len = 0U;
@@ -599,6 +599,7 @@ uint16_t net_calc_chksum(struct net_pkt *pkt, uint8_t proto)
 
 	return ~sum;
 }
+#endif
 
 #if defined(CONFIG_NET_IPV4)
 uint16_t net_calc_chksum_ipv4(struct net_pkt *pkt)
@@ -627,7 +628,7 @@ uint16_t net_calc_chksum_igmp(uint8_t *data, size_t len)
 }
 #endif /* CONFIG_NET_IPV4_IGMP */
 
-#if defined(CONFIG_NET_IPV6) || defined(CONFIG_NET_IPV4)
+#if defined(CONFIG_NET_IP)
 static bool convert_port(const char *buf, uint16_t *port)
 {
 	unsigned long tmp;
@@ -644,7 +645,7 @@ static bool convert_port(const char *buf, uint16_t *port)
 
 	return true;
 }
-#endif /* CONFIG_NET_IPV6 || CONFIG_NET_IPV4 */
+#endif /* CONFIG_NET_IP */
 
 #if defined(CONFIG_NET_IPV6)
 static bool parse_ipv6(const char *str, size_t str_len,
@@ -721,13 +722,11 @@ static bool parse_ipv6(const char *str, size_t str_len,
 		net_sin6(addr)->sin6_port = htons(port);
 
 		NET_DBG("IPv6 host %s port %d",
-			log_strdup(net_addr_ntop(AF_INET6, addr6,
-						 ipaddr, sizeof(ipaddr) - 1)),
+			net_addr_ntop(AF_INET6, addr6, ipaddr, sizeof(ipaddr) - 1),
 			port);
 	} else {
 		NET_DBG("IPv6 host %s",
-			log_strdup(net_addr_ntop(AF_INET6, addr6,
-						 ipaddr, sizeof(ipaddr) - 1)));
+			net_addr_ntop(AF_INET6, addr6, ipaddr, sizeof(ipaddr) - 1));
 	}
 
 	return true;
@@ -798,8 +797,7 @@ static bool parse_ipv4(const char *str, size_t str_len,
 	net_sin(addr)->sin_port = htons(port);
 
 	NET_DBG("IPv4 host %s port %d",
-		log_strdup(net_addr_ntop(AF_INET, addr4,
-					 ipaddr, sizeof(ipaddr) - 1)),
+		net_addr_ntop(AF_INET, addr4, ipaddr, sizeof(ipaddr) - 1),
 		port);
 	return true;
 }

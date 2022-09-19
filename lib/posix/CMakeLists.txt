@@ -4,10 +4,11 @@
 zephyr_interface_library_named(posix_subsys)
 
 if(CONFIG_POSIX_API)
-  target_include_directories(posix_subsys INTERFACE ${ZEPHYR_BASE}/include/posix)
+  target_include_directories(posix_subsys INTERFACE ${ZEPHYR_BASE}/include/zephyr/posix)
 endif()
 
 zephyr_library()
+zephyr_library_sources(perror.c)
 zephyr_library_sources(pthread_common.c)
 zephyr_library_sources_ifdef(CONFIG_PTHREAD_IPC pthread_cond.c)
 zephyr_library_sources_ifdef(CONFIG_PTHREAD_IPC pthread_mutex.c)

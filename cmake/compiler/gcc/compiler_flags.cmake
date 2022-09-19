@@ -26,11 +26,10 @@ set_compiler_property(PROPERTY optimization_size  -Os)
 #######################################################
 
 # GCC Option standard warning base in Zephyr
-set_compiler_property(PROPERTY warning_base
+check_set_compiler_property(PROPERTY warning_base
     -Wall
-    -Wformat
-    -Wformat-security
-    -Wno-format-zero-length
+    "SHELL:-Wformat -Wformat-security"
+    "SHELL:-Wformat -Wno-format-zero-length"
     -Wno-main
 )
 
@@ -106,7 +105,7 @@ set_compiler_property(PROPERTY cstd -std=)
 
 if (NOT CONFIG_NEWLIB_LIBC AND
     NOT COMPILER STREQUAL "xcc" AND
-    NOT ZEPHYR_TOOLCHAIN_VARIANT STREQUAL "espressif" AND
+    NOT CONFIG_HAS_ESPRESSIF_HAL AND
     NOT CONFIG_NATIVE_APPLICATION)
   set_compiler_property(PROPERTY nostdinc -nostdinc)
   set_compiler_property(APPEND PROPERTY nostdinc_include ${NOSTDINC})
@@ -128,6 +127,9 @@ set_property(TARGET compiler-cpp PROPERTY dialect_cpp20 "-std=c++20"
   "-Wno-register" "-Wno-volatile")
 set_property(TARGET compiler-cpp PROPERTY dialect_cpp2b "-std=c++2b"
   "-Wno-register" "-Wno-volatile")
+
+# Flag for disabling strict aliasing rule in C and C++
+set_compiler_property(PROPERTY no_strict_aliasing -fno-strict-aliasing)
 
 # Disable exceptions flag in C++
 set_property(TARGET compiler-cpp PROPERTY no_exceptions "-fno-exceptions")
@@ -160,7 +162,7 @@ endif()
 check_set_compiler_property(APPEND PROPERTY hosted -fno-freestanding)
 
 # gcc flag for a freestanding application
-set_compiler_property(PROPERTY freestanding -ffreestanding)
+check_set_compiler_property(PROPERTY freestanding -ffreestanding)
 
 # Flag to enable debugging
 set_compiler_property(PROPERTY debug -g)
@@ -174,10 +176,7 @@ set_compiler_property(PROPERTY no_common -fno-common)
 # GCC compiler flags for imacros. The specific header must be appended by user.
 set_compiler_property(PROPERTY imacros -imacros)
 
-# GCC compiler flags for sanitizing.
-set_compiler_property(PROPERTY sanitize_address -fsanitize=address)
-
-set_compiler_property(PROPERTY sanitize_undefined -fsanitize=undefined)
+set_compiler_property(PROPERTY gprof -pg)
 
 # GCC compiler flag for turning off thread-safe initialization of local statics
 set_property(TARGET compiler-cpp PROPERTY no_threadsafe_statics "-fno-threadsafe-statics")
@@ -192,3 +191,9 @@ endif()
 
 # Compiler flag for disabling pointer arithmetic warnings
 set_compiler_property(PROPERTY warning_no_pointer_arithmetic "-Wno-pointer-arith")
+
+#Compiler flags for disabling position independent code / executable
+set_compiler_property(PROPERTY no_position_independent
+                      -fno-pic
+                      -fno-pie
+)

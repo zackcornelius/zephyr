@@ -96,7 +96,6 @@ choice BT_LL_CHOICE
 
 config BT_LL_SW_SPLIT
 	bool "Software-based BLE Link Layer"
-	select BT_RECV_IS_RX_THREAD
 	select ENTROPY_GENERATOR
 	select NRF_HW_TIMER0_RESERVED
 	select NRF_HW_RTC0_RESERVED
@@ -158,7 +157,7 @@ config BT_CTLR_DUP_FILTER_LEN
 
 config BT_CTLR_DUP_FILTER_ADV_SET_MAX
 	int "Number of Extended Advertising Sets in the scan duplicate filter"
-	depends on BT_OBSERVER && (BT_CTLR_DUP_FILTER_LEN > 0)
+	depends on BT_OBSERVER && BT_CTLR_ADV_EXT && (BT_CTLR_DUP_FILTER_LEN > 0)
 	range 1 16
 	default 1
 	help
@@ -226,7 +225,7 @@ config BT_CTLR_ISO_TX_BUFFER_SIZE
 	  Read Buffer Size V2 command response.
 
 config BT_CTLR_ISOAL_SOURCES
-	int "Number of Isochronous Adaptation Layer sinks"
+	int "Number of Isochronous Adaptation Layer sources"
 	depends on BT_CTLR_ADV_ISO || BT_CTLR_CONN_ISO
 	range 1 64
 	default 1
@@ -246,12 +245,17 @@ config BT_CTLR_ISOAL_SINKS
 config BT_CTLR_ISO_VENDOR_DATA_PATH
 	bool "Vendor-specific ISO data path"
 	depends on BT_CTLR_SYNC_ISO || BT_CTLR_CONN_ISO
+	select BT_CTLR_HCI_CODEC_AND_DELAY_INFO
 
 choice BT_CTLR_TX_PWR
 	prompt "Tx Power"
 	default BT_CTLR_TX_PWR_0
+	depends on BT_CTLR_TX_PWR_ANTENNA = 0 || BT_LL_SW_SPLIT
 	help
-	  Select the supported BLE Radio transmit power level in dBm.
+	  Select a supported BLE Radio transmit power level in dBm.
+	  Only values supported natively by the SoC are available.
+	  The value set here represents the actual default power level fed
+	  to the antenna.
 
 config BT_CTLR_TX_PWR_PLUS_8
 	bool "+8 dBm"
@@ -275,7 +279,7 @@ config BT_CTLR_TX_PWR_PLUS_4
 
 config BT_CTLR_TX_PWR_PLUS_3
 	bool "+3 dBm"
-	depends on SOC_COMPATIBLE_NRF52X
+	depends on SOC_COMPATIBLE_NRF52X || SOC_SERIES_NRF53X
 
 config BT_CTLR_TX_PWR_PLUS_2
 	bool "+2 dBm"
@@ -305,9 +309,24 @@ config BT_CTLR_TX_PWR_MINUS_30
 
 config BT_CTLR_TX_PWR_MINUS_40
 	bool "-40 dBm"
-	depends on SOC_COMPATIBLE_NRF52X
+	depends on SOC_COMPATIBLE_NRF52X || SOC_SERIES_NRF53X
 
 endchoice
+
+config BT_CTLR_TX_PWR_ANTENNA
+	int "Set TX power (dBm)"
+	range -127 127
+	default 0
+	depends on !BT_LL_SW_SPLIT
+	help
+	  Request a TX power in dBm. The power level set will be equal to or
+	  less than the one requested, based on the values supported by the
+	  hardware used. Values outside the supported range will be set to the
+	  nearest supported value.
+	  The value set here represents the actual power level fed to the
+	  antenna. When a Front-End Module is used, gain values for the SoC and
+	  FEM are calculated automatically to guarantee the closest possible
+	  match to the value requested by the user at the RF output.
 
 config BT_CTLR_TX_PWR_DYNAMIC_CONTROL
 	bool "Tx Power Dynamic Control"
@@ -416,16 +435,16 @@ endif # BT_CONN
 
 config BT_CTLR_FILTER_ACCEPT_LIST
 	bool "Filter Accept List Support"
-	default y
+	default y if BT_HCI_RAW || BT_FILTER_ACCEPT_LIST
 	help
 	  Enable support for controller Filter Accept List feature
 
 config BT_CTLR_PRIVACY
 	bool "LE Controller-based Privacy"
 	depends on BT_CTLR_PRIVACY_SUPPORT
-	default y
 	select BT_CTLR_FILTER_ACCEPT_LIST if BT_LL_SW_SPLIT
 	select BT_RPA
+	default y if BT_HCI_RAW || BT_PRIVACY
 	help
 	  Enable support for Bluetooth v4.2 LE Controller-based Privacy feature
 	  in the Controller.
@@ -483,19 +502,14 @@ config BT_CTLR_CHAN_SEL_2
 	  the Controller.
 
 config BT_CTLR_ADV_EXT
-	bool "LE Advertising Extensions" if !BT_LL_SW_SPLIT
+	bool "LE Advertising Extensions"
 	depends on BT_CTLR_ADV_EXT_SUPPORT
 	select BT_CTLR_CHAN_SEL_2 if BT_LL_SW_SPLIT && BT_BROADCASTER
 	select BT_CTLR_SCAN_REQ_NOTIFY if BT_LL_SW_SPLIT && BT_BROADCASTER
-	# Enable by default for BT_LL_SW_SPLIT when "LE Advertising Set Terminated event" is implemented
-	default y if BT_EXT_ADV && !BT_LL_SW_SPLIT
+	default y if BT_EXT_ADV
 	help
 	  Enable support for Bluetooth 5.0 LE Advertising Extensions in the
 	  Controller.
-
-config BT_CTLR_ADV_EXT
-	prompt "LE Advertising Extensions [EXPERIMENTAL]" if BT_LL_SW_SPLIT
-	select EXPERIMENTAL if BT_LL_SW_SPLIT
 
 if BT_CTLR_ADV_EXT
 
@@ -507,14 +521,29 @@ config BT_CTLR_ADV_SET
 	help
 	  Maximum supported advertising sets.
 
+config BT_CTLR_ADV_INTERVAL_MAX
+	hex "Primary Advertising Interval Maximum"
+	depends on BT_BROADCASTER
+	range 0x000020 0x004000 if BT_LL_SW_SPLIT
+	range 0x000020 0xFFFFFF
+	default 0x004000 if BT_LL_SW_SPLIT
+	default 0xFFFFFF
+	help
+	  Supported Primary Advertising Interval Maximum value.
+	  Bluetooth Core Specification v5.3 permitted range is 0x000020 to
+	  0xFFFFFF in 0.625 ms units.
+
 config BT_CTLR_ADV_DATA_LEN_MAX
 	int "Maximum Advertising Data Length"
+	depends on BT_BROADCASTER
+	range 31 191 if BT_LL_SW_SPLIT && !BT_CTLR_ADV_DATA_CHAIN
 	range 31 1650
 	help
 	  Maximum Extended Advertising Data Length.
 
 config BT_CTLR_ADV_EXT_RX_PDU_LEN_MAX
 	int "Maximum Advertising Extensions Receive PDU Length"
+	depends on BT_OBSERVER
 	range 255 255 if BT_HCI_RAW
 	range 31 255
 	default 255
@@ -529,7 +558,7 @@ config BT_CTLR_SCAN_DATA_LEN_MAX
 	  Maximum Extended Scanning Data Length.
 
 config BT_CTLR_ADV_PERIODIC
-	bool "LE Periodic Advertising in Advertising State" if !BT_LL_SW_SPLIT
+	bool "LE Periodic Advertising in Advertising State"
 	depends on BT_BROADCASTER && BT_CTLR_ADV_PERIODIC_SUPPORT
 	select BT_CTLR_CHAN_SEL_2
 	default y if BT_PER_ADV
@@ -537,19 +566,29 @@ config BT_CTLR_ADV_PERIODIC
 	  Enable support for Bluetooth 5.0 LE Periodic Advertising in the
 	  Controller.
 
-config BT_CTLR_ADV_PERIODIC
-	bool "LE Periodic Advertising in Advertising State [EXPERIMENTAL]" if BT_LL_SW_SPLIT
-	select EXPERIMENTAL if BT_LL_SW_SPLIT
+if BT_CTLR_ADV_PERIODIC
 
 config BT_CTLR_ADV_PERIODIC_ADI_SUPPORT
 	bool "Periodic Advertising ADI support"
-	depends on BT_CTLR_ADV_PERIODIC
 	default y
 	help
 	  Enable support for adding AdvDataInfo in Periodic Advertising PDUs.
 
+config BT_CTLR_ADV_PERIODIC_INTERVAL_MAX
+	hex "Periodic Advertising Interval Maximum"
+	range 0x0006 0x2000 if BT_LL_SW_SPLIT
+	range 0x0006 0xFFFF
+	default 0x2000 if BT_LL_SW_SPLIT
+	default 0xFFFF
+	help
+	  Supported Periodic Advertising Interval Maximum value.
+	  Bluetooth Core Specification v5.3 permitted range is 0x0006 to
+	  0xFFFF in 1.25 ms units.
+
+endif # BT_CTLR_ADV_PERIODIC
+
 config BT_CTLR_SYNC_PERIODIC
-	bool "LE Periodic Advertising in Synchronization State" if !BT_LL_SW_SPLIT
+	bool "LE Periodic Advertising in Synchronization State"
 	depends on BT_OBSERVER && BT_CTLR_SYNC_PERIODIC_SUPPORT
 	select BT_CTLR_CHAN_SEL_2
 	default y if BT_PER_ADV_SYNC
@@ -557,13 +596,10 @@ config BT_CTLR_SYNC_PERIODIC
 	  Enable support for Bluetooth 5.0 LE Periodic Advertising in
 	  Synchronization state in the Controller.
 
-config BT_CTLR_SYNC_PERIODIC
-	bool "LE Periodic Advertising in Synchronization State [EXPERIMENTAL]" if BT_LL_SW_SPLIT
-	select EXPERIMENTAL if BT_LL_SW_SPLIT
+if BT_CTLR_SYNC_PERIODIC
 
 config BT_CTLR_SYNC_PERIODIC_ADV_LIST
 	bool "LE Periodic Advertiser List support"
-	depends on BT_CTLR_SYNC_PERIODIC
 	default y
 	help
 	  Enable support for LE Periodic Advertiser List support.
@@ -579,7 +615,6 @@ config BT_CTLR_SYNC_PERIODIC_ADV_LIST_SIZE
 
 config BT_CTLR_SYNC_PERIODIC_ADI_SUPPORT
 	bool "Periodic Advertising Sync with ADI support (duplicate filtering)"
-	depends on BT_CTLR_SYNC_PERIODIC
 	default y
 	help
 	  Enable support for duplicate filtering using AdvDataInfo present in
@@ -587,7 +622,6 @@ config BT_CTLR_SYNC_PERIODIC_ADI_SUPPORT
 
 config BT_CTLR_SYNC_PERIODIC_CTE_TYPE_FILTERING
 	bool "LE Periodic Advertiser filtering by CTE type"
-	depends on BT_CTLR_SYNC_PERIODIC
 	default y
 	help
 	  Enable filtering of periodic advertisements depending on type of
@@ -596,8 +630,9 @@ config BT_CTLR_SYNC_PERIODIC_CTE_TYPE_FILTERING
 config BT_CTLR_CHECK_SAME_PEER_SYNC
 	# Hidden Kconfig to add same peer synchronization check
 	bool
-	depends on BT_CTLR_SYNC_PERIODIC
 	default BT_PER_ADV_SYNC_MAX > 1
+
+endif # BT_CTLR_SYNC_PERIODIC
 
 config BT_CTLR_ADV_ISO
 	bool "LE Broadcast Isochronous Channel advertising" if !BT_LL_SW_SPLIT
@@ -609,7 +644,7 @@ config BT_CTLR_ADV_ISO
 	  Controller.
 
 config BT_CTLR_ADV_ISO
-	bool "LE Broadcast Isochronous Channel advertising [EXPERIMENTAL]" if BT_LL_SW_SPLIT
+	bool "LE Broadcast Isochronous Channel advertising (Split Link Layer) [EXPERIMENTAL]" if BT_LL_SW_SPLIT
 	select EXPERIMENTAL if BT_LL_SW_SPLIT
 
 config BT_CTLR_SYNC_ISO
@@ -622,7 +657,7 @@ config BT_CTLR_SYNC_ISO
 	  the Controller.
 
 config BT_CTLR_SYNC_ISO
-	bool "LE Broadcast Isochronous Channel advertising sync [EXPERIMENTAL]" if BT_LL_SW_SPLIT
+	bool "LE Broadcast Isochronous Channel advertising sync (Split Link Layer) [EXPERIMENTAL]" if BT_LL_SW_SPLIT
 	select EXPERIMENTAL if BT_LL_SW_SPLIT
 
 config BT_CTLR_BROADCAST_ISO
@@ -700,7 +735,7 @@ config BT_CTLR_CENTRAL_ISO
 	  Central role in the Controller.
 
 config BT_CTLR_CENTRAL_ISO
-	bool "LE Connected Isochronous Stream Central [EXPERIMENTAL]" if BT_LL_SW_SPLIT
+	bool "LE Connected Isochronous Stream Central (Split Link Layer) [EXPERIMENTAL]" if BT_LL_SW_SPLIT
 	select BT_CTLR_SET_HOST_FEATURE
 	select EXPERIMENTAL if BT_LL_SW_SPLIT
 
@@ -712,7 +747,7 @@ config BT_CTLR_PERIPHERAL_ISO
 	  Peripheral role in the Controller.
 
 config BT_CTLR_PERIPHERAL_ISO
-	bool "LE Connected Isochronous Stream Peripheral [EXPERIMENTAL]" if BT_LL_SW_SPLIT
+	bool "LE Connected Isochronous Stream Peripheral (Split Link Layer) [EXPERIMENTAL]" if BT_LL_SW_SPLIT
 	select BT_CTLR_SET_HOST_FEATURE
 	select EXPERIMENTAL if BT_LL_SW_SPLIT
 

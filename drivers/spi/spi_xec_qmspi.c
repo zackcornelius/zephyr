@@ -6,13 +6,13 @@
 
 #define DT_DRV_COMPAT microchip_xec_qmspi
 
-#include <logging/log.h>
+#include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(spi_xec, CONFIG_SPI_LOG_LEVEL);
 
 #include "spi_context.h"
 #include <errno.h>
-#include <device.h>
-#include <drivers/spi.h>
+#include <zephyr/device.h>
+#include <zephyr/drivers/spi.h>
 #include <soc.h>
 
 /* Device constant configuration parameters */
@@ -522,7 +522,7 @@ static int qmspi_transceive(const struct device *dev,
 	uint32_t descr, last_didx;
 	int err;
 
-	spi_context_lock(&data->ctx, false, NULL, config);
+	spi_context_lock(&data->ctx, false, NULL, NULL, config);
 
 	err = qmspi_configure(dev, config);
 	if (err != 0) {

@@ -11,8 +11,7 @@ development kit for the SimpleLink |trade| multi-Standard CC2652R wireless MCU.
 
 See the `TI CC26x2R LaunchPad Product Page`_ for details.
 
-.. figure:: img/cc26x2r1_launchxl.png
-   :width: 400px
+.. figure:: img/cc26x2r1_launchxl.jpg
    :align: center
    :alt: TI CC26x2R LaunchPad
 
@@ -41,6 +40,8 @@ features:
 | Interface | Controller | Driver/Component     |
 +===========+============+======================+
 | GPIO      | on-chip    | gpio                 |
++-----------+------------+----------------------+
+| MPU       | on-chip    | arch/arm             |
 +-----------+------------+----------------------+
 | NVIC      | on-chip    | arch/arm             |
 +-----------+------------+----------------------+
@@ -150,7 +151,7 @@ Prerequisites:
 #. Install OpenOCD
 
    You can obtain OpenOCD by following these
-   :ref:`installing the latest Zephyr SDK instructions <zephyr_sdk>`.
+   :ref:`installing the latest Zephyr SDK instructions <toolchain_zephyr_sdk>`.
 
    After the installation, add the directory containing the OpenOCD executable
    to your environment's PATH variable. For example, use this command in Linux:
@@ -222,9 +223,9 @@ disable sleep state 2 while polling:
 
 .. code-block:: c
 
-    pm_policy_state_lock_get(PM_STATE_STANDBY);
+    pm_policy_state_lock_get(PM_STATE_STANDBY, PM_ALL_SUBSTATES);
     <code that calls uart_poll_in() and expects input at any point in time>
-    pm_policy_state_lock_put(PM_STATE_STANDBY);
+    pm_policy_state_lock_put(PM_STATE_STANDBY, PM_ALL_SUBSTATES);
 
 
 References

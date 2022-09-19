@@ -7,15 +7,18 @@
 #include <stdio.h>
 #include <string.h>
 
-#include "settings/settings.h"
+#include <zephyr/settings/settings.h>
 
 #include <errno.h>
-#include <sys/printk.h>
+#include <zephyr/sys/printk.h>
 
 #if IS_ENABLED(CONFIG_SETTINGS_FS)
-#include <fs/fs.h>
-#include <fs/littlefs.h>
+#include <zephyr/fs/fs.h>
+#include <zephyr/fs/littlefs.h>
 #endif
+
+#define STORAGE_PARTITION	storage_partition
+#define STORAGE_PARTITION_ID	FIXED_PARTITION_ID(STORAGE_PARTITION)
 
 #define GAMMA_DEFAULT_VAl 0
 #define FAIL_MSG "fail (err %d)\n"
@@ -426,7 +429,7 @@ static void example_initialization(void)
 	static struct fs_mount_t littlefs_mnt = {
 	.type = FS_LITTLEFS,
 	.fs_data = &cstorage,
-	.storage_dev = (void *)FLASH_AREA_ID(storage),
+	.storage_dev = (void *)STORAGE_PARTITION_ID,
 	.mnt_point = "/ff"
 	};
 

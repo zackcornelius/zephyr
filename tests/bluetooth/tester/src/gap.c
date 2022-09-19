@@ -6,22 +6,22 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <sys/atomic.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/types.h>
 #include <string.h>
 
-#include <toolchain.h>
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/conn.h>
-#include <bluetooth/gatt.h>
-#include <bluetooth/hci.h>
+#include <zephyr/toolchain.h>
+#include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/conn.h>
+#include <zephyr/bluetooth/gatt.h>
+#include <zephyr/bluetooth/hci.h>
 
-#include <sys/byteorder.h>
-#include <net/buf.h>
+#include <zephyr/sys/byteorder.h>
+#include <zephyr/net/buf.h>
 
 #include <hci_core.h>
 
-#include <logging/log.h>
+#include <zephyr/logging/log.h>
 #define LOG_MODULE_NAME bttester_gap
 LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
@@ -355,7 +355,7 @@ static void oob_data_request(struct bt_conn *conn,
 	{
 		LOG_DBG("Set %s OOB SC data for %s, ",
 			oob_config_str(oob_info->lesc.oob_config),
-			log_strdup(addr));
+			addr);
 
 		struct bt_le_oob_sc_data *oobd_local =
 			oob_info->lesc.oob_config != BT_CONN_OOB_REMOTE_ONLY ?
@@ -378,7 +378,7 @@ static void oob_data_request(struct bt_conn *conn,
 		    bt_addr_le_cmp(info.le.local, &oob_sc_local.addr)) {
 			bt_addr_le_to_str(info.le.local, addr, sizeof(addr));
 			LOG_DBG("No OOB data available for local %s",
-				log_strdup(addr));
+				addr);
 			bt_conn_auth_cancel(conn);
 			return;
 		}
@@ -394,7 +394,7 @@ static void oob_data_request(struct bt_conn *conn,
 
 #if !defined(CONFIG_BT_SMP_SC_PAIR_ONLY)
 	case BT_CONN_OOB_LE_LEGACY:
-		LOG_DBG("Legacy OOB TK requested from remote %s", log_strdup(addr));
+		LOG_DBG("Legacy OOB TK requested from remote %s", addr);
 
 		err = bt_le_oob_set_legacy_tk(conn, oob_legacy_tk);
 		if (err < 0) {
@@ -957,6 +957,11 @@ static void auth_pairing_complete(struct bt_conn *conn, bool bonded)
 #endif
 }
 
+static struct bt_conn_auth_info_cb auth_info_cb = {
+	.pairing_failed = auth_pairing_failed,
+	.pairing_complete = auth_pairing_complete,
+};
+
 static void set_io_cap(const uint8_t *data, uint16_t len)
 {
 	const struct gap_set_io_cap_cmd *cmd = (void *) data;
@@ -998,8 +1003,6 @@ static void set_io_cap(const uint8_t *data, uint16_t len)
 	}
 
 	cb.pairing_accept = auth_pairing_accept;
-	cb.pairing_failed = auth_pairing_failed;
-	cb.pairing_complete = auth_pairing_complete;
 
 	if (bt_conn_auth_cb_register(&cb)) {
 		status = BTP_STATUS_FAILED;
@@ -1362,6 +1365,7 @@ uint8_t tester_init_gap(void)
 	if (bt_conn_auth_cb_register(&cb)) {
 		return BTP_STATUS_FAILED;
 	}
+	bt_conn_auth_info_cb_register(&auth_info_cb);
 
 	err = bt_enable(tester_init_gap_cb);
 	if (err < 0) {

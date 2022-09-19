@@ -9,18 +9,18 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <bluetooth/iso.h>
+#include <zephyr/bluetooth/iso.h>
 
 typedef enum __packed {
 	BT_CONN_DISCONNECTED,
 	BT_CONN_DISCONNECT_COMPLETE,
-	BT_CONN_CONNECT_SCAN,
-	BT_CONN_CONNECT_AUTO,
-	BT_CONN_CONNECT_ADV,
-	BT_CONN_CONNECT_DIR_ADV,
-	BT_CONN_CONNECT,
+	BT_CONN_CONNECTING_SCAN,
+	BT_CONN_CONNECTING_AUTO,
+	BT_CONN_CONNECTING_ADV,
+	BT_CONN_CONNECTING_DIR_ADV,
+	BT_CONN_CONNECTING,
 	BT_CONN_CONNECTED,
-	BT_CONN_DISCONNECT,
+	BT_CONN_DISCONNECTING,
 } bt_conn_state_t;
 
 /* bt_conn flags: the flags defined here represent connection parameters */
@@ -36,6 +36,9 @@ enum {
 	BT_CONN_PERIPHERAL_PARAM_SET,	/* If periph param were set from app */
 	BT_CONN_PERIPHERAL_PARAM_L2CAP,	/* If should force L2CAP for CPUP */
 	BT_CONN_FORCE_PAIR,             /* Pairing even with existing keys. */
+#if defined(CONFIG_BT_GATT_CLIENT)
+	BT_CONN_ATT_MTU_EXCHANGED,	/* If ATT MTU has been exchanged. */
+#endif /* CONFIG_BT_GATT_CLIENT */
 
 	BT_CONN_AUTO_FEATURE_EXCH,	/* Auto-initiated LE Feat done */
 	BT_CONN_AUTO_VERSION_INFO,      /* Auto-initiated LE version done */
@@ -123,15 +126,20 @@ struct bt_conn_iso {
 	};
 
 #if defined(CONFIG_BT_ISO_UNICAST) || defined(CONFIG_BT_ISO_BROADCASTER)
-	/** 16-bit sequence number that shall be incremented per SDU interval */
-	uint16_t seq_num;
+	/** @brief 16-bit sequence number that shall be incremented per SDU interval
+	 *
+	 *  Stored as 32-bit to handle wrapping: Only once the value has
+	 *  become greater than 0xFFFF will values less than the
+	 *  current are allowed again.
+	 */
+	uint32_t seq_num;
 #endif /* CONFIG_BT_ISO_UNICAST) || CONFIG_BT_ISO_BROADCASTER */
 
-	/** Type of the ISO channel */
-	enum bt_iso_chan_type type;
+	/** Stored information about the ISO stream */
+	struct bt_iso_info info;
 };
 
-typedef void (*bt_conn_tx_cb_t)(struct bt_conn *conn, void *user_data);
+typedef void (*bt_conn_tx_cb_t)(struct bt_conn *conn, void *user_data, int err);
 
 struct bt_conn_tx {
 	sys_snode_t node;
@@ -272,9 +280,6 @@ struct bt_iso_create_param {
 
 int bt_conn_iso_init(void);
 
-/* Add a new ISO connection */
-struct bt_conn *bt_conn_add_iso(struct bt_conn *acl);
-
 /* Cleanup ISO references */
 void bt_iso_cleanup_acl(struct bt_conn *iso_conn);
 
@@ -305,10 +310,10 @@ static inline bool bt_conn_is_handle_valid(struct bt_conn *conn)
 {
 	switch (conn->state) {
 	case BT_CONN_CONNECTED:
-	case BT_CONN_DISCONNECT:
+	case BT_CONN_DISCONNECTING:
 	case BT_CONN_DISCONNECT_COMPLETE:
 		return true;
-	case BT_CONN_CONNECT:
+	case BT_CONN_CONNECTING:
 		/* ISO connection handle assigned at connect state */
 		if (IS_ENABLED(CONFIG_BT_ISO) &&
 		    conn->type == BT_CONN_TYPE_ISO) {

@@ -10,15 +10,15 @@
  *
  */
 
-#include <tc_util.h>
+#include <zephyr/tc_util.h>
 #include <stdbool.h>
-#include <zephyr.h>
-#include <ztest.h>
-#include <logging/log_backend.h>
-#include <logging/log_backend_std.h>
-#include <logging/log_ctrl.h>
-#include <logging/log.h>
-#include <logging/log_output.h>
+#include <zephyr/kernel.h>
+#include <zephyr/ztest.h>
+#include <zephyr/logging/log_backend.h>
+#include <zephyr/logging/log_backend_std.h>
+#include <zephyr/logging/log_ctrl.h>
+#include <zephyr/logging/log.h>
+#include <zephyr/logging/log_output.h>
 
 #define LOG_MODULE_NAME log_test
 LOG_MODULE_REGISTER(LOG_MODULE_NAME, LOG_LEVEL_INF);
@@ -26,7 +26,7 @@ static K_SEM_DEFINE(log_sem, 0, 1);
 
 #define TIMESTAMP_FREC (2000000)
 ZTEST_BMEM uint32_t source_id;
-/* used when log_msg2 create in user space */
+/* used when log_msg create in user space */
 ZTEST_BMEM uint8_t domain, level;
 ZTEST_DMEM uint32_t msg_data = 0x1234;
 ZTEST_DMEM char *test_msg_usr = "test msg";
@@ -61,7 +61,7 @@ struct backend_cb {
 };
 
 static void process(const struct log_backend *const backend,
-		union log_msg2_generic *msg)
+		union log_msg_generic *msg)
 {
 	uint32_t flags;
 	struct backend_cb *cb = (struct backend_cb *)backend->cb->ctx;
@@ -71,19 +71,19 @@ static void process(const struct log_backend *const backend,
 	}
 
 	if (cb->check_domain_id) {
-		zassert_equal(log_msg2_get_domain(&(msg->log)), CONFIG_LOG_DOMAIN_ID,
+		zassert_equal(log_msg_get_domain(&(msg->log)), CONFIG_LOG_DOMAIN_ID,
 				"Unexpected domain id");
 	}
 
 	if (cb->check_timestamp) {
 		uint32_t exp_timestamp = cb->exp_timestamps[cb->counter];
 
-		zassert_equal(log_msg2_get_timestamp(&(msg->log)), exp_timestamp,
+		zassert_equal(log_msg_get_timestamp(&(msg->log)), exp_timestamp,
 			      "Unexpected message index");
 	}
 
 	if (cb->check_severity) {
-		zassert_equal(log_msg2_get_level(&(msg->log)),
+		zassert_equal(log_msg_get_level(&(msg->log)),
 			      cb->exp_severity[cb->counter],
 			      "Unexpected log severity");
 	}
@@ -96,68 +96,15 @@ static void process(const struct log_backend *const backend,
 	}
 
 	if (k_is_user_context()) {
-		zassert_equal(log_msg2_get_domain(&(msg->log)), domain,
+		zassert_equal(log_msg_get_domain(&(msg->log)), domain,
 				"Unexpected domain id");
 
-		zassert_equal(log_msg2_get_level(&(msg->log)), level,
+		zassert_equal(log_msg_get_level(&(msg->log)), level,
 			      "Unexpected log severity");
 	}
 
 	flags = log_backend_std_get_flags();
-	log_output_msg2_process(&log_output, &msg->log, flags);
-}
-
-static void put(struct log_backend const *const backend, struct log_msg *msg)
-{
-	log_msg_get(msg);
-	struct backend_cb *cb = (struct backend_cb *)backend->cb->ctx;
-
-	if (cb->check_domain_id) {
-		zassert_equal(log_msg_domain_id_get(msg), CONFIG_LOG_DOMAIN_ID,
-				"Unexpected domain id");
-	}
-
-	if (cb->check_timestamp) {
-		uint32_t exp_timestamp = cb->exp_timestamps[cb->counter];
-
-		zassert_equal(log_msg_timestamp_get(msg), exp_timestamp,
-			      "Unexpected message index");
-	}
-
-	if (cb->check_severity) {
-		zassert_equal(log_msg_level_get(msg),
-			      cb->exp_severity[cb->counter],
-			      "Unexpected log severity");
-	}
-
-	cb->counter++;
-	if (IS_ENABLED(CONFIG_LOG_PROCESS_THREAD)) {
-		if (cb->counter == cb->total_logs) {
-			k_sem_give(&log_sem);
-		}
-	}
-	log_msg_put(msg);
-}
-
-static void sync_string(const struct log_backend *const backend,
-		     struct log_msg_ids src_level, uint32_t timestamp,
-		     const char *fmt, va_list ap)
-{
-	struct backend_cb *cb = (struct backend_cb *)backend->cb->ctx;
-
-	cb->counter++;
-	cb->sync++;
-}
-
-static void sync_hexdump(const struct log_backend *const backend,
-			 struct log_msg_ids src_level, uint32_t timestamp,
-			 const char *metadata, const uint8_t *data,
-			 uint32_t length)
-{
-	struct backend_cb *cb = (struct backend_cb *)backend->cb->ctx;
-
-	cb->counter++;
-	cb->sync++;
+	log_output_msg_process(&log_output, &msg->log, flags);
 }
 
 static void panic(const struct log_backend *const backend)
@@ -166,12 +113,7 @@ static void panic(const struct log_backend *const backend)
 }
 
 const struct log_backend_api log_backend_test_api = {
-	.process = IS_ENABLED(CONFIG_LOG2) ? process : NULL,
-	.put = IS_ENABLED(CONFIG_LOG1_DEFERRED) ? put : NULL,
-	.put_sync_string = IS_ENABLED(CONFIG_LOG1_IMMEDIATE) ?
-			sync_string : NULL,
-	.put_sync_hexdump = IS_ENABLED(CONFIG_LOG1_IMMEDIATE) ?
-			sync_hexdump : NULL,
+	.process = process,
 	.panic = panic,
 };
 
@@ -187,6 +129,7 @@ struct backend_cb backend2_cb;
  * when install this timestamp function, timestamping frequency is set to
  * 2000000, means 2 timestamp/us
  */
+#ifndef CONFIG_USERSPACE
 static uint32_t stamp;
 static uint32_t timestamp_get(void)
 {
@@ -216,14 +159,16 @@ static void log_setup(bool backend2_enable)
 	}
 }
 
-static bool log_test_process(bool bypass)
+#endif
+
+static bool log_test_process(void)
 {
 	if (IS_ENABLED(CONFIG_LOG_PROCESS_THREAD)) {
 		/* waiting for all logs have been handled */
 		k_sem_take(&log_sem, K_FOREVER);
 		return false;
 	} else {
-		return log_process(bypass);
+		return log_process();
 	}
 }
 
@@ -236,7 +181,8 @@ static bool log_test_process(bool bypass)
  * @addtogroup logging
  */
 
-void test_log_domain_id(void)
+#ifndef CONFIG_USERSPACE
+ZTEST(test_log_core_additional, test_log_domain_id)
 {
 	log_setup(false);
 
@@ -245,7 +191,7 @@ void test_log_domain_id(void)
 
 	LOG_INF("info message for domain id test");
 
-	while (log_test_process(false)) {
+	while (log_test_process()) {
 	}
 
 	zassert_equal(backend1_cb.total_logs, backend1_cb.counter,
@@ -260,8 +206,7 @@ void test_log_domain_id(void)
  *
  * @addtogroup logging
  */
-
-void test_log_sync(void)
+ZTEST(test_log_core_additional, test_log_sync)
 {
 	TC_PRINT("Logging synchronously\n");
 
@@ -285,8 +230,7 @@ void test_log_sync(void)
  *
  * @addtogroup logging
  */
-
-void test_log_early_logging(void)
+ZTEST(test_log_core_additional, test_log_early_logging)
 {
 	if (IS_ENABLED(CONFIG_LOG_MODE_IMMEDIATE)) {
 		ztest_test_skip();
@@ -314,7 +258,7 @@ void test_log_early_logging(void)
 		backend1_cb.total_logs = 3;
 		log_backend_enable(&backend1, &backend1_cb, LOG_LEVEL_DBG);
 
-		while (log_test_process(false)) {
+		while (log_test_process()) {
 		}
 
 		zassert_equal(backend1_cb.total_logs, backend1_cb.counter,
@@ -331,8 +275,7 @@ void test_log_early_logging(void)
  *
  * @addtogroup logging
  */
-
-void test_log_severity(void)
+ZTEST(test_log_core_additional, test_log_severity)
 {
 	log_setup(false);
 
@@ -346,7 +289,7 @@ void test_log_severity(void)
 	LOG_ERR("error message");
 	backend1_cb.total_logs = 3;
 
-	while (log_test_process(false)) {
+	while (log_test_process()) {
 	}
 
 	zassert_equal(backend1_cb.total_logs, backend1_cb.counter,
@@ -360,8 +303,7 @@ void test_log_severity(void)
  *
  * @addtogroup logging
  */
-
-void test_log_timestamping(void)
+ZTEST(test_log_core_additional, test_log_timestamping)
 {
 	stamp = 0U;
 
@@ -394,7 +336,7 @@ void test_log_timestamping(void)
 	LOG_WRN("test timestamp");
 	backend1_cb.total_logs = 3;
 
-	while (log_test_process(false)) {
+	while (log_test_process()) {
 	}
 
 	zassert_equal(backend1_cb.total_logs,
@@ -412,7 +354,7 @@ void test_log_timestamping(void)
  */
 
 #define UART_BACKEND "log_backend_uart"
-void test_multiple_backends(void)
+ZTEST(test_log_core_additional, test_multiple_backends)
 {
 	TC_PRINT("Test multiple backends");
 	/* enable both backend1 and backend2 */
@@ -441,7 +383,7 @@ void test_multiple_backends(void)
  */
 
 #ifdef CONFIG_LOG_PROCESS_THREAD
-void test_log_thread(void)
+ZTEST(test_log_core_additional, test_log_thread)
 {
 	uint32_t slabs_free, used, max;
 
@@ -457,74 +399,68 @@ void test_log_thread(void)
 	slabs_free = log_msg_mem_get_free();
 	used = log_msg_mem_get_used();
 	max = log_msg_mem_get_max_used();
-	zassert_equal(used, 0, NULL);
+	zassert_equal(used, 0);
 
 	LOG_INF("log info to log thread");
 	LOG_WRN("log warning to log thread");
 	LOG_ERR("log error to log thread");
 
-	zassert_equal(log_msg_mem_get_used(), 3, NULL);
-	zassert_equal(log_msg_mem_get_free(), slabs_free - 3, NULL);
-	zassert_equal(log_msg_mem_get_max_used(), max, NULL);
+	zassert_equal(log_msg_mem_get_used(), 3);
+	zassert_equal(log_msg_mem_get_free(), slabs_free - 3);
+	zassert_equal(log_msg_mem_get_max_used(), max);
 
 	TC_PRINT("after log, free: %d, used: %d, max: %d\n", slabs_free, used, max);
 	/* wait 2 seconds for logging thread to handle this log message*/
 	k_sleep(K_MSEC(2000));
 	zassert_equal(3, backend1_cb.counter,
 		      "Unexpected amount of messages received by the backend.");
-	zassert_equal(log_msg_mem_get_used(), 0, NULL);
+	zassert_equal(log_msg_mem_get_used(), 0);
 }
 #else
-void test_log_thread(void)
+ZTEST(test_log_core_additional, test_log_thread)
 {
 	ztest_test_skip();
 }
 #endif
 
-static void call_log_generic(uint32_t source_id, const char *fmt, ...)
+static void call_log_generic(const char *fmt, ...)
 {
-	struct log_msg_ids src_level = {
-		.level = LOG_LEVEL_INF,
-		.domain_id = CONFIG_LOG_DOMAIN_ID,
-		.source_id = source_id,
-	};
-
 	va_list ap;
 
 	va_start(ap, fmt);
-	log_generic(src_level, fmt, ap, LOG_STRDUP_EXEC);
+	log2_generic(LOG_LEVEL_INF, fmt, ap);
 	va_end(ap);
 }
 
-void test_log_generic(void)
+ZTEST(test_log_core_additional, test_log_generic)
 {
-	source_id = LOG_CURRENT_MODULE_ID();
 	char *log_msg = "log user space";
+	int i = 100;
 
 	log_setup(false);
 	backend1_cb.total_logs = 4;
 
-	call_log_generic(source_id, "log generic");
-	call_log_generic(source_id, "log generic: %s", log_msg);
-	call_log_generic(source_id, "log generic %d\n", source_id);
-	call_log_generic(source_id, "log generic %d, %d\n", source_id, 1);
-	while (log_test_process(false)) {
+	call_log_generic("log generic");
+	call_log_generic("log generic: %s", log_msg);
+	call_log_generic("log generic %d\n", i);
+	call_log_generic("log generic %d, %d\n", i, 1);
+	while (log_test_process()) {
 	}
 }
 
-void test_log_msg2_create(void)
+ZTEST(test_log_core_additional, test_log_msg_create)
 {
 	log_setup(false);
-	if (!IS_ENABLED(CONFIG_LOG1) && IS_ENABLED(CONFIG_LOG_MODE_DEFERRED)) {
+	if (IS_ENABLED(CONFIG_LOG_MODE_DEFERRED)) {
 		int mode;
 
 		domain = 3;
 		level = 2;
 
-		z_log_msg2_runtime_create(domain, __log_current_const_data,
+		z_log_msg_runtime_create(domain, __log_current_const_data,
 					  level, &msg_data, 0,
 					  sizeof(msg_data), NULL);
-		/* try z_log_msg2_static_create() */
+		/* try z_log_msg_static_create() */
 		Z_LOG_MSG2_STACK_CREATE(0, domain, __log_current_const_data,
 					level, &msg_data,
 					sizeof(msg_data), NULL);
@@ -533,35 +469,38 @@ void test_log_msg2_create(void)
 			  CONFIG_LOG_DOMAIN_ID, NULL,
 			  LOG_LEVEL_INTERNAL_RAW_STRING, NULL, 0, test_msg_usr);
 
-		while (log_test_process(false)) {
+		while (log_test_process()) {
 		}
 	}
 }
 
-void test_log_msg2_create_user(void)
+#else
+
+ZTEST_USER(test_log_core_additional, test_log_msg_create_user)
 {
-	if (IS_ENABLED(CONFIG_LOG2)) {
-		int mode;
+	int mode;
 
-		domain = 3;
-		level = 2;
+	domain = 3;
+	level = 2;
 
-		z_log_msg2_runtime_create(domain, NULL,
-					  level, &msg_data, 0,
-					  sizeof(msg_data), test_msg_usr);
-		/* try z_log_msg2_static_create() */
-		Z_LOG_MSG2_STACK_CREATE(0, domain, NULL,
-					level, &msg_data,
-					sizeof(msg_data), test_msg_usr);
+	z_log_msg_runtime_create(domain, NULL,
+				  level, &msg_data, 0,
+				  sizeof(msg_data), test_msg_usr);
+	/* try z_log_msg_static_create() */
+	Z_LOG_MSG2_STACK_CREATE(0, domain, NULL,
+				level, &msg_data,
+				sizeof(msg_data), test_msg_usr);
 
-		Z_LOG_MSG2_CREATE(!IS_ENABLED(CONFIG_USERSPACE), mode,
-			  CONFIG_LOG_DOMAIN_ID, NULL,
-			  LOG_LEVEL_INTERNAL_RAW_STRING, NULL, 0, test_msg_usr);
+	Z_LOG_MSG2_CREATE(!IS_ENABLED(CONFIG_USERSPACE), mode,
+		  CONFIG_LOG_DOMAIN_ID, NULL,
+		  LOG_LEVEL_INTERNAL_RAW_STRING, NULL, 0, test_msg_usr);
 
-		while (log_test_process(false)) {
-		}
+	while (log_test_process()) {
 	}
 }
+
+#endif /** CONFIG_USERSPACE **/
+
 /* The log process thread has the K_LOWEST_APPLICATION_THREAD_PRIO, adjust it
  * to a higher priority to increase the chances of being scheduled to handle
  * log message as soon as possible
@@ -573,40 +512,12 @@ void promote_log_thread(const struct k_thread *thread, void *user_data)
 	}
 }
 
-extern void test_log_from_user(void);
-extern void test_log_hexdump_from_user(void);
-extern void test_log_generic_user(void);
-extern void test_log_filter_set(void);
-extern void test_log_panic(void);
-
-/*test case main entry*/
-void test_main(void)
+static void *test_log_core_additional_setup(void)
 {
 #ifdef CONFIG_LOG_PROCESS_THREAD
 	k_thread_foreach(promote_log_thread, NULL);
 #endif
-
-#ifdef CONFIG_USERSPACE
-	ztest_test_suite(test_log_core_additional,
-			 ztest_user_unit_test(test_log_from_user),
-			 ztest_user_unit_test(test_log_hexdump_from_user),
-			 ztest_user_unit_test(test_log_generic_user),
-			 ztest_user_unit_test(test_log_filter_set),
-			 ztest_user_unit_test(test_log_panic),
-			 ztest_user_unit_test(test_log_msg2_create_user));
-	ztest_run_test_suite(test_log_core_additional);
-#else
-	ztest_test_suite(test_log_core_additional,
-			 ztest_unit_test(test_multiple_backends),
-			 ztest_unit_test(test_log_generic),
-			 ztest_unit_test(test_log_domain_id),
-			 ztest_unit_test(test_log_severity),
-			 ztest_unit_test(test_log_timestamping),
-			 ztest_unit_test(test_log_early_logging),
-			 ztest_unit_test(test_log_sync),
-			 ztest_unit_test(test_log_thread),
-			 ztest_unit_test(test_log_msg2_create)
-			 );
-	ztest_run_test_suite(test_log_core_additional);
-#endif
+	return NULL;
 }
+
+ZTEST_SUITE(test_log_core_additional, NULL, test_log_core_additional_setup, NULL, NULL, NULL);

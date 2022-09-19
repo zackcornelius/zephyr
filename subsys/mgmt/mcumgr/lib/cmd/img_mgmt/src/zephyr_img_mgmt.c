@@ -4,43 +4,35 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <logging/log.h>
+#include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(mcumgr_img_mgmt, CONFIG_MCUMGR_IMG_MGMT_LOG_LEVEL);
 
 #include <assert.h>
-#include <drivers/flash.h>
-#include <storage/flash_map.h>
-#include <zephyr.h>
+#include <zephyr/drivers/flash.h>
+#include <zephyr/storage/flash_map.h>
+#include <zephyr/kernel.h>
 #include <soc.h>
-#include <init.h>
-#include <dfu/mcuboot.h>
-#include <dfu/flash_img.h>
+#include <zephyr/init.h>
+#include <bootutil/bootutil_public.h>
+#include <zephyr/dfu/mcuboot.h>
+#include <zephyr/dfu/flash_img.h>
+#include <zephyr/mgmt/mcumgr/buf.h>
 #include <mgmt/mgmt.h>
 #include <img_mgmt/img_mgmt_impl.h>
 #include <img_mgmt/img_mgmt.h>
 #include <img_mgmt/image.h>
 #include "img_mgmt_priv.h"
 
+#define SLOT0_PARTITION		slot0_partition
+#define SLOT1_PARTITION		slot1_partition
+#define SLOT2_PARTITION		slot2_partition
+#define SLOT3_PARTITION		slot3_partition
+
 BUILD_ASSERT(CONFIG_IMG_MGMT_UPDATABLE_IMAGE_NUMBER == 1 ||
-	     (CONFIG_IMG_MGMT_UPDATABLE_IMAGE_NUMBER == 2 && FLASH_AREA_LABEL_EXISTS(image_2) &&
-	      FLASH_AREA_LABEL_EXISTS(image_3)),
+	     (CONFIG_IMG_MGMT_UPDATABLE_IMAGE_NUMBER == 2 &&
+	      FIXED_PARTITION_EXISTS(SLOT2_PARTITION) &&
+	      FIXED_PARTITION_EXISTS(SLOT3_PARTITION)),
 	     "Missing partitions?");
-
-static int flash_area_open_ex(uint8_t id, const struct flash_area **fa)
-{
-	const struct flash_area *lfa;
-	int rc = flash_area_open(id, &lfa);
-
-	if (rc == 0) {
-		if (flash_area_get_device(lfa) != NULL) {
-			*fa = lfa;
-		} else {
-			rc = -ENODEV;
-		}
-	}
-
-	return rc;
-}
 
 static int
 zephyr_img_mgmt_slot_to_image(int slot)
@@ -49,7 +41,7 @@ zephyr_img_mgmt_slot_to_image(int slot)
 	case 0:
 	case 1:
 		return 0;
-#if FLASH_AREA_LABEL_EXISTS(image_2) && FLASH_AREA_LABEL_EXISTS(image_3)
+#if FIXED_PARTITION_EXISTS(SLOT2_PARTITION) && FIXED_PARTITION_EXISTS(SLOT2_PARTITION)
 	case 2:
 	case 3:
 		return 1;
@@ -59,13 +51,12 @@ zephyr_img_mgmt_slot_to_image(int slot)
 	}
 	return 0;
 }
+
 /**
  * Determines if the specified area of flash is completely unwritten.
  */
-static int
-zephyr_img_mgmt_flash_check_empty(uint8_t fa_id, bool *out_empty)
+static int img_mgmt_flash_check_empty_inner(const struct flash_area *fa, bool *out_empty)
 {
-	const struct flash_area *fa;
 	uint32_t data[16];
 	off_t addr;
 	off_t end;
@@ -74,11 +65,6 @@ zephyr_img_mgmt_flash_check_empty(uint8_t fa_id, bool *out_empty)
 	int i;
 	uint8_t erased_val;
 	uint32_t erased_val_32;
-
-	rc = flash_area_open_ex(fa_id, &fa);
-	if (rc != 0) {
-		return MGMT_ERR_EUNKNOWN;
-	}
 
 	assert(fa->fa_size % 4 == 0);
 
@@ -95,23 +81,40 @@ zephyr_img_mgmt_flash_check_empty(uint8_t fa_id, bool *out_empty)
 
 		rc = flash_area_read(fa, addr, data, bytes_to_read);
 		if (rc != 0) {
-			flash_area_close(fa);
 			return MGMT_ERR_EUNKNOWN;
 		}
 
 		for (i = 0; i < bytes_to_read / 4; i++) {
 			if (data[i] != erased_val_32) {
 				*out_empty = false;
-				flash_area_close(fa);
 				return 0;
 			}
 		}
 	}
 
 	*out_empty = true;
-	flash_area_close(fa);
+
 	return 0;
 }
+
+#ifndef CONFIG_IMG_ERASE_PROGRESSIVELY
+static int img_mgmt_flash_check_empty(uint8_t fa_id, bool *out_empty)
+{
+	const struct flash_area *fa;
+	int rc;
+
+	rc = flash_area_open(fa_id, &fa);
+	if (rc != 0) {
+		return MGMT_ERR_EUNKNOWN;
+	}
+
+	rc = img_mgmt_flash_check_empty_inner(fa, out_empty);
+
+	flash_area_close(fa);
+
+	return rc;
+}
+#endif
 
 /**
  * Get flash_area ID for a image number; actually the slots are images
@@ -126,22 +129,22 @@ zephyr_img_mgmt_flash_area_id(int slot)
 
 	switch (slot) {
 	case 0:
-		fa_id = FLASH_AREA_ID(image_0);
+		fa_id = FIXED_PARTITION_ID(SLOT0_PARTITION);
 		break;
 
 	case 1:
-		fa_id = FLASH_AREA_ID(image_1);
+		fa_id = FIXED_PARTITION_ID(SLOT1_PARTITION);
 		break;
 
-#if FLASH_AREA_LABEL_EXISTS(image_2)
+#if FIXED_PARTITION_EXISTS(SLOT2_PARTITION)
 	case 2:
-		fa_id = FLASH_AREA_ID(image_2);
+		fa_id = FIXED_PARTITION_ID(SLOT2_PARTITION);
 		break;
 #endif
 
-#if FLASH_AREA_LABEL_EXISTS(image_3)
+#if FIXED_PARTITION_EXISTS(slot3_partition)
 	case 3:
-		fa_id = FLASH_AREA_ID(image_3);
+		fa_id = FIXED_PARTITION_ID(SLOT3_PARTITION);
 		break;
 #endif
 
@@ -224,17 +227,7 @@ img_mgmt_get_unused_slot_area_id(int image)
 #error "Unsupported number of images"
 #endif
 
-/**
- * Compares two image version numbers in a semver-compatible way.
- *
- * @param a	The first version to compare.
- * @param b	The second version to compare.
- *
- * @return	-1 if a < b
- * @return	0 if a = b
- * @return	1 if a > b
- */
-static int
+int
 img_mgmt_vercmp(const struct image_version *a, const struct image_version *b)
 {
 	if (a->iv_major < b->iv_major) {
@@ -261,29 +254,32 @@ img_mgmt_vercmp(const struct image_version *a, const struct image_version *b)
 }
 
 int
-img_mgmt_impl_erase_slot(void)
+img_mgmt_impl_erase_slot(int slot)
 {
+	const struct flash_area *fa;
+	int rc;
+	int area_id = zephyr_img_mgmt_flash_area_id(slot);
 	bool empty;
-	int rc, best_id;
 
-	/* Select any non-active, unused slot */
-	best_id = img_mgmt_get_unused_slot_area_id(-1);
-	if (best_id < 0) {
-		return MGMT_ERR_ENOENT;
+	if (area_id < 0) {
+		return MGMT_ERR_EUNKNOWN;
 	}
-	rc = zephyr_img_mgmt_flash_check_empty(best_id, &empty);
+
+	rc = flash_area_open(area_id, &fa);
+
 	if (rc != 0) {
 		return MGMT_ERR_EUNKNOWN;
 	}
 
-	if (!empty) {
-		rc = boot_erase_img_bank(best_id);
-		if (rc != 0) {
-			return MGMT_ERR_EUNKNOWN;
-		}
+	rc = img_mgmt_flash_check_empty_inner(fa, &empty);
+
+	if (!empty && rc == 0) {
+		rc = flash_area_erase(fa, 0, fa->fa_size);
 	}
 
-	return 0;
+	flash_area_close(fa);
+
+	return (rc == 0 ? MGMT_ERR_EOK : MGMT_ERR_EUNKNOWN);
 }
 
 int
@@ -328,7 +324,7 @@ img_mgmt_impl_read(int slot, unsigned int offset, void *dst,
 		return MGMT_ERR_EUNKNOWN;
 	}
 
-	rc = flash_area_open_ex(area_id, &fa);
+	rc = flash_area_open(area_id, &fa);
 	if (rc != 0) {
 		return MGMT_ERR_EUNKNOWN;
 	}
@@ -343,85 +339,76 @@ img_mgmt_impl_read(int slot, unsigned int offset, void *dst,
 	return 0;
 }
 
-/*
- * The alloc_ctx and free_ctx are specifically provided for
- * the img_mgmt_impl_write_image_data to allocate/free single flash_img_context
- * type buffer.
- * When heap is enabled these functions will operate on heap; when  heap is not
- * allocated the alloc_ctx just returns pointer to static, global life-time
- * variable, and free_ctx does nothing.
- * CONFIG_HEAP_MEM_POOL_SIZE is C preprocessor literal.
- */
-static inline struct flash_img_context *alloc_ctx(void)
-{
-	struct flash_img_context *ctx = NULL;
-
-	if (CONFIG_HEAP_MEM_POOL_SIZE > 0) {
-		ctx = k_malloc(sizeof(*ctx));
-	} else {
-		static struct flash_img_context stcx;
-
-		ctx = &stcx;
-	}
-	return ctx;
-}
-
-static inline void free_ctx(struct flash_img_context *ctx)
-{
-	if (CONFIG_HEAP_MEM_POOL_SIZE > 0) {
-		k_free(ctx);
-	}
-}
-
+#if defined(CONFIG_IMG_MGMT_USE_HEAP_FOR_FLASH_IMG_CONTEXT)
 int
 img_mgmt_impl_write_image_data(unsigned int offset, const void *data, unsigned int num_bytes,
 				   bool last)
 {
-	int rc = 0;
+	/* Even if CONFIG_HEAP_MEM_POOL_SIZE will be able to match size of the structure,
+	 * keep in mind that when application will put the heap under pressure, obtaining
+	 * of a flash image context may not be possible, so plan bigger heap size or
+	 * make sure to limit application pressure on heap when DFU is expected.
+	 */
+	BUILD_ASSERT(CONFIG_HEAP_MEM_POOL_SIZE >= (sizeof(struct flash_img_context)),
+		     "Not enough heap mem for flash_img_context.");
+
+	int rc = MGMT_ERR_EOK;
 	static struct flash_img_context *ctx;
 
-	if (CONFIG_HEAP_MEM_POOL_SIZE > 0 && offset != 0 && ctx == NULL) {
+	if (offset != 0 && ctx == NULL) {
 		return MGMT_ERR_EUNKNOWN;
 	}
 
 	if (offset == 0) {
-		if (ctx == NULL) {
-			ctx = alloc_ctx();
+		if (ctx != NULL) {
+			return MGMT_ERR_EUNKNOWN;
+		}
+		ctx = k_malloc(sizeof(struct flash_img_context));
 
-			if (ctx == NULL) {
-				rc = MGMT_ERR_ENOMEM;
-				goto out;
-			}
+		if (ctx == NULL) {
+			return MGMT_ERR_ENOMEM;
 		}
 
-		rc = flash_img_init_id(ctx, g_img_mgmt_state.area_id);
-
-		if (rc != 0) {
+		if (flash_img_init_id(ctx, g_img_mgmt_state.area_id) != 0) {
 			rc = MGMT_ERR_EUNKNOWN;
 			goto out;
 		}
 	}
 
-	if (offset != ctx->stream.bytes_written + ctx->stream.buf_bytes) {
-		rc = MGMT_ERR_EUNKNOWN;
-		goto out;
-	}
-
-	/* Cast away const. */
-	rc = flash_img_buffered_write(ctx, (void *)data, num_bytes, last);
-	if (rc != 0) {
+	if (flash_img_buffered_write(ctx, data, num_bytes, last) != 0) {
 		rc = MGMT_ERR_EUNKNOWN;
 		goto out;
 	}
 
 out:
-	if (CONFIG_HEAP_MEM_POOL_SIZE > 0 && (last || rc != 0)) {
+	if (last || rc != MGMT_ERR_EOK) {
 		k_free(ctx);
 		ctx = NULL;
 	}
 
 	return rc;
 }
+
+#else
+int
+img_mgmt_impl_write_image_data(unsigned int offset, const void *data, unsigned int num_bytes,
+				   bool last)
+{
+	static struct flash_img_context ctx;
+
+	if (offset == 0) {
+		if (flash_img_init_id(&ctx, g_img_mgmt_state.area_id) != 0) {
+			return MGMT_ERR_EUNKNOWN;
+		}
+	}
+
+	if (flash_img_buffered_write(&ctx, data, num_bytes, last) != 0) {
+		return MGMT_ERR_EUNKNOWN;
+	}
+
+	return MGMT_ERR_EOK;
+}
+#endif
 
 int
 img_mgmt_impl_erase_image_data(unsigned int off, unsigned int num_bytes)
@@ -434,7 +421,7 @@ img_mgmt_impl_erase_image_data(unsigned int off, unsigned int num_bytes)
 		goto end;
 	}
 
-	rc = flash_area_open_ex(g_img_mgmt_state.area_id, &fa);
+	rc = flash_area_open(g_img_mgmt_state.area_id, &fa);
 	if (rc != 0) {
 		LOG_ERR("Can't bind to the flash area (err %d)", rc);
 		rc = MGMT_ERR_EUNKNOWN;
@@ -470,6 +457,12 @@ img_mgmt_impl_erase_image_data(unsigned int off, unsigned int num_bytes)
 
 	LOG_INF("Erased 0x%zx bytes of image slot", erase_size);
 
+#ifdef CONFIG_MCUBOOT_IMG_MANAGER
+	/* Right now MCUmgr supports only mcuboot images.
+	 * Above compilation swich might help to recognize mcuboot related
+	 * code when supports for anothe bootloader will be introduced.
+	 */
+
 	/* erase the image trailer area if it was not erased */
 	off = BOOT_TRAILER_IMG_STATUS_OFFS(fa);
 	if (off >= erase_size) {
@@ -488,7 +481,7 @@ img_mgmt_impl_erase_image_data(unsigned int off, unsigned int num_bytes)
 
 		LOG_INF("Erased 0x%zx bytes of image slot trailer", erase_size);
 	}
-
+#endif
 	rc = 0;
 
 end_fa:
@@ -496,14 +489,6 @@ end_fa:
 end:
 	return rc;
 }
-
-#if CONFIG_IMG_ERASE_PROGRESSIVELY
-int img_mgmt_impl_erase_if_needed(uint32_t off, uint32_t len)
-{
-	/* This is done internally to the flash_img API. */
-	return 0;
-}
-#endif
 
 int
 img_mgmt_impl_swap_type(int slot)
@@ -520,8 +505,7 @@ img_mgmt_impl_swap_type(int slot)
 	case BOOT_SWAP_TYPE_REVERT:
 		return IMG_MGMT_SWAP_TYPE_REVERT;
 	default:
-		assert(0);
-		return IMG_MGMT_SWAP_TYPE_NONE;
+		return IMG_MGMT_SWAP_TYPE_UNKNOWN;
 	}
 }
 
@@ -544,12 +528,14 @@ img_mgmt_impl_upload_inspect(const struct img_mgmt_upload_req *req,
 {
 	const struct image_header *hdr;
 	struct image_version cur_ver;
-	bool empty;
 	int rc;
+#ifndef CONFIG_IMG_ERASE_PROGRESSIVELY
+	bool empty;
+#endif
 
 	memset(action, 0, sizeof(*action));
 
-	if (req->off == -1) {
+	if (req->off == SIZE_MAX) {
 		/* Request did not include an `off` field. */
 		IMG_MGMT_UPLOAD_ACTION_SET_RC_RSN(action, img_mgmt_err_str_hdr_malformed);
 		return MGMT_ERR_EINVAL;
@@ -557,26 +543,26 @@ img_mgmt_impl_upload_inspect(const struct img_mgmt_upload_req *req,
 
 	if (req->off == 0) {
 		/* First upload chunk. */
-		if (req->data_len < sizeof(struct image_header)) {
+		if (req->img_data.len < sizeof(struct image_header)) {
 			/*  Image header is the first thing in the image */
 			IMG_MGMT_UPLOAD_ACTION_SET_RC_RSN(action, img_mgmt_err_str_hdr_malformed);
 			return MGMT_ERR_EINVAL;
 		}
 
-		if (req->size == -1) {
+		if (req->size == SIZE_MAX) {
 			/* Request did not include a `len` field. */
 			IMG_MGMT_UPLOAD_ACTION_SET_RC_RSN(action, img_mgmt_err_str_hdr_malformed);
 			return MGMT_ERR_EINVAL;
 		}
 		action->size = req->size;
 
-		hdr = (struct image_header *)req->img_data;
+		hdr = (struct image_header *)req->img_data.value;
 		if (hdr->ih_magic != IMAGE_MAGIC) {
 			IMG_MGMT_UPLOAD_ACTION_SET_RC_RSN(action, img_mgmt_err_str_magic_mismatch);
 			return MGMT_ERR_EINVAL;
 		}
 
-		if (req->data_sha_len > IMG_MGMT_DATA_SHA_LEN) {
+		if (req->data_sha.len > IMG_MGMT_DATA_SHA_LEN) {
 			return MGMT_ERR_EINVAL;
 		}
 
@@ -586,9 +572,10 @@ img_mgmt_impl_upload_inspect(const struct img_mgmt_upload_req *req,
 		 * the same data hash so we can just resume it by simply including
 		 * current upload offset in response.
 		 */
-		if ((req->data_sha_len > 0) && (g_img_mgmt_state.area_id != -1)) {
-			if ((g_img_mgmt_state.data_sha_len == req->data_sha_len) &&
-			    !memcmp(g_img_mgmt_state.data_sha, req->data_sha, req->data_sha_len)) {
+		if ((req->data_sha.len > 0) && (g_img_mgmt_state.area_id != -1)) {
+			if ((g_img_mgmt_state.data_sha_len == req->data_sha.len) &&
+			    !memcmp(g_img_mgmt_state.data_sha, req->data_sha.value,
+				    req->data_sha.len)) {
 				return 0;
 			}
 		}
@@ -602,7 +589,7 @@ img_mgmt_impl_upload_inspect(const struct img_mgmt_upload_req *req,
 
 #if defined(CONFIG_IMG_MGMT_REJECT_DIRECT_XIP_MISMATCHED_SLOT)
 		if (hdr->ih_flags & IMAGE_F_ROM_FIXED_ADDR) {
-			rc = flash_area_open_ex(action->area_id, &fa);
+			rc = flash_area_open(action->area_id, &fa);
 			if (rc) {
 				IMG_MGMT_UPLOAD_ACTION_SET_RC_RSN(action,
 					img_mgmt_err_str_flash_open_failed);
@@ -610,7 +597,7 @@ img_mgmt_impl_upload_inspect(const struct img_mgmt_upload_req *req,
 			}
 
 			if (fa->fa_off != hdr->ih_load_addr) {
-				IMG_MGMT_UPLOAD_ACTION_SET_RC_RSN(aciton,
+				IMG_MGMT_UPLOAD_ACTION_SET_RC_RSN(action,
 					img_mgmt_err_str_image_bad_flash_addr);
 				flash_area_close(fa);
 				return MGMT_ERR_EINVAL;
@@ -637,10 +624,8 @@ img_mgmt_impl_upload_inspect(const struct img_mgmt_upload_req *req,
 			}
 		}
 
-#if CONFIG_IMG_ERASE_PROGRESSIVELY
-		(void) empty;
-#else
-		rc = zephyr_img_mgmt_flash_check_empty(action->area_id, &empty);
+#ifndef CONFIG_IMG_ERASE_PROGRESSIVELY
+		rc = img_mgmt_flash_check_empty(action->area_id, &empty);
 		if (rc) {
 			return MGMT_ERR_EUNKNOWN;
 		}
@@ -661,7 +646,7 @@ img_mgmt_impl_upload_inspect(const struct img_mgmt_upload_req *req,
 		}
 	}
 
-	action->write_bytes = req->data_len;
+	action->write_bytes = req->img_data.len;
 	action->proceed = true;
 	IMG_MGMT_UPLOAD_ACTION_SET_RC_RSN(action, NULL);
 
@@ -679,7 +664,7 @@ img_mgmt_impl_erased_val(int slot, uint8_t *erased_val)
 		return MGMT_ERR_EUNKNOWN;
 	}
 
-	rc = flash_area_open_ex(area_id, &fa);
+	rc = flash_area_open(area_id, &fa);
 	if (rc != 0) {
 		return MGMT_ERR_EUNKNOWN;
 	}

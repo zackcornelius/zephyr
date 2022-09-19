@@ -4,8 +4,8 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <zephyr.h>
-#include <canbus/isotp.h>
+#include <zephyr/kernel.h>
+#include <zephyr/canbus/isotp.h>
 
 
 #define RX_THREAD_STACK_SIZE 512

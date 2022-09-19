@@ -3,11 +3,18 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-#include <ztress.h>
-#include <sys/printk.h>
-#include <random/rand32.h>
+#include <zephyr/ztress.h>
+#include <zephyr/ztest_test.h>
+#include <zephyr/sys/printk.h>
+#include <zephyr/random/rand32.h>
 #include <string.h>
 
+/* Flag set at startup which determines if stress test can run on this platform.
+ * Stress test should not run on the platform which system clock is too high
+ * compared to cpu clock. System clock is sometimes set globally for the test
+ * and for some platforms it may be unacceptable.
+ */
+static bool cpu_sys_clock_ok;
 
 /* Timer used for adjusting contexts backoff time to get optimal CPU load. */
 static void ctrl_timeout(struct k_timer *timer);
@@ -76,15 +83,16 @@ static void progress_timeout(struct k_timer *timer)
 	struct ztress_context_data *thread_data = k_timer_user_data_get(timer);
 	uint32_t progress = 100;
 	uint32_t cnt = context_cnt;
+	uint32_t thread_data_start_index = 0;
 
 	if (tmr_data != NULL) {
-		cnt--;
-		if (tmr_data->exec_cnt != 0 && exec_cnt[cnt] != 0) {
-			progress = (100 * exec_cnt[cnt]) / tmr_data->exec_cnt;
+		thread_data_start_index = 1;
+		if (tmr_data->exec_cnt != 0 && exec_cnt[0] != 0) {
+			progress = (100 * exec_cnt[0]) / tmr_data->exec_cnt;
 		}
 	}
 
-	for (uint32_t i = 0; i < cnt; i++) {
+	for (uint32_t i = thread_data_start_index; i < cnt; i++) {
 		if (thread_data[i].exec_cnt == 0 && thread_data[i].preempt_cnt == 0) {
 			continue;
 		}
@@ -265,7 +273,7 @@ static void ztress_thread(void *data, void *prio, void *unused)
 static void thread_cb(const struct k_thread *cthread, void *user_data)
 {
 #define GET_IDLE_TID(i, tid) do {\
-	if (strcmp(tname, "idle 0" STRINGIFY(i)) == 0) { \
+	if (strcmp(tname, (CONFIG_MP_NUM_CPUS == 1) ? "idle" : "idle 0" STRINGIFY(i)) == 0) { \
 		idle_tid[i] = tid; \
 	} \
 } while (0)
@@ -282,10 +290,6 @@ static void ztress_init(struct ztress_context_data *thread_data)
 	memset(&rt, 0, sizeof(rt));
 	k_thread_foreach(thread_cb, NULL);
 	k_msleep(10);
-
-	if (idle_tid == NULL) {
-		printk("Failed to identify idle thread. CPU load will not be tracked\n");
-	}
 
 	k_timer_start(&ctrl_timer, K_MSEC(100), K_MSEC(100));
 	k_timer_user_data_set(&progress_timer, thread_data);
@@ -326,6 +330,14 @@ int ztress_execute(struct ztress_context_data *timer_data,
 
 	if (cnt + 2 > CONFIG_NUM_PREEMPT_PRIORITIES) {
 		return -EINVAL;
+	}
+
+	/* Skip test if system clock is set too high compared to CPU frequency.
+	 * It can happen when system clock is set globally for the test which is
+	 * run on various platforms.
+	 */
+	if (!cpu_sys_clock_ok) {
+		ztest_test_skip();
 	}
 
 	ztress_init(thread_data);
@@ -433,3 +445,35 @@ uint32_t ztress_optimized_ticks(uint32_t id)
 
 	return backoff[id].ticks;
 }
+
+/* Doing it here and not before each test because test may have some additional
+ * cpu load (e.g. busy simulator) running that would influence the result.
+ *
+ */
+static int ztress_cpu_clock_to_sys_clock_check(const struct device *unused)
+{
+	static volatile int cnt = 2000;
+	uint32_t t = sys_clock_tick_get_32();
+
+	while (cnt-- > 0) {
+		/* empty */
+	}
+
+	t = sys_clock_tick_get_32() - t;
+	/* Threshold is arbitrary. Derived from nRF platorm where CPU runs at 64MHz and
+	 * system clock at 32kHz (sys clock interrupt every 1950 cycles). That ratio is
+	 * ok even for no optimization case.
+	 * If some valid platforms are cut because of that, it can be changed.
+	 */
+	cpu_sys_clock_ok = t <= 12;
+
+	/* Read first random number. There are some generators which do not support
+	 * reading first random number from an interrupt context (initialization
+	 * is performed at the first read).
+	 */
+	(void)sys_rand32_get();
+
+	return 0;
+}
+
+SYS_INIT(ztress_cpu_clock_to_sys_clock_check, POST_KERNEL, CONFIG_KERNEL_INIT_PRIORITY_DEVICE);

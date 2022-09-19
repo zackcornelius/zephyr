@@ -10,14 +10,13 @@
  * NOTE: This driver implements the GICv1 and GICv2 interfaces.
  */
 
-#include <devicetree.h>
-#include <sw_isr_table.h>
-#include <dt-bindings/interrupt-controller/arm-gic.h>
-#include <drivers/interrupt_controller/gic.h>
+#include <zephyr/devicetree.h>
+#include <zephyr/sw_isr_table.h>
+#include <zephyr/dt-bindings/interrupt-controller/arm-gic.h>
+#include <zephyr/drivers/interrupt_controller/gic.h>
 
-#define CPU_REG_ID(cpu_node_id) DT_REG_ADDR(cpu_node_id),
 static const uint64_t cpu_mpid_list[] = {
-	DT_FOREACH_CHILD_STATUS_OKAY(DT_PATH(cpus), CPU_REG_ID)
+	DT_FOREACH_CHILD_STATUS_OKAY_SEP(DT_PATH(cpus), DT_REG_ADDR, (,))
 };
 
 BUILD_ASSERT(ARRAY_SIZE(cpu_mpid_list) >= CONFIG_MP_NUM_CPUS,

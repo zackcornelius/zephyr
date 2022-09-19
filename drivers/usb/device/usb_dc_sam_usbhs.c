@@ -6,12 +6,12 @@
 
 #define DT_DRV_COMPAT atmel_sam_usbhs
 
-#include <usb/usb_device.h>
+#include <zephyr/usb/usb_device.h>
 #include <soc.h>
 #include <string.h>
 
 #define LOG_LEVEL CONFIG_USB_DRIVER_LOG_LEVEL
-#include <logging/log.h>
+#include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(usb_dc_sam_usbhs);
 
 /*
@@ -465,6 +465,8 @@ int usb_dc_ep_configure(const struct usb_dc_ep_cfg_data *const cfg)
 
 	/* Reset the endpoint */
 	usb_dc_ep_reset(ep_idx);
+	/* Initialize the endpoint FIFO */
+	usb_dc_ep_fifo_reset(ep_idx);
 
 	/* Map the endpoint type */
 	switch (cfg->ep_type) {

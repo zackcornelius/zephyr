@@ -9,19 +9,19 @@
 #include <errno.h>
 #include <stddef.h>
 
-#include <zephyr.h>
+#include <zephyr/kernel.h>
 
-#include <init.h>
-#include <drivers/uart.h>
-#include <sys/util.h>
-#include <sys/byteorder.h>
-#include <debug/stack.h>
-#include <sys/printk.h>
+#include <zephyr/init.h>
+#include <zephyr/drivers/uart.h>
+#include <zephyr/sys/util.h>
+#include <zephyr/sys/byteorder.h>
+#include <zephyr/debug/stack.h>
+#include <zephyr/sys/printk.h>
 #include <string.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/hci.h>
-#include <drivers/bluetooth/hci_driver.h>
+#include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/hci.h>
+#include <zephyr/drivers/bluetooth/hci_driver.h>
 
 #define BT_DBG_ENABLED IS_ENABLED(CONFIG_BT_DEBUG_HCI_DRIVER)
 #define LOG_MODULE_NAME bt_driver
@@ -127,7 +127,7 @@ static const uint8_t conf_rsp[] = { 0x04, 0x7b };
 #define SIG_BUF_SIZE (BT_BUF_RESERVE + MAX_SIG_LEN)
 NET_BUF_POOL_DEFINE(h5_pool, SIGNAL_COUNT, SIG_BUF_SIZE, 0, NULL);
 
-static const struct device *h5_dev;
+static const struct device *const h5_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_bt_uart));
 
 static void h5_reset_rx(void)
 {
@@ -778,9 +778,8 @@ static int bt_uart_init(const struct device *unused)
 {
 	ARG_UNUSED(unused);
 
-	h5_dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_bt_uart));
 	if (!device_is_ready(h5_dev)) {
-		return -EINVAL;
+		return -ENODEV;
 	}
 
 	bt_hci_driver_register(&drv);

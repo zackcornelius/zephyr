@@ -4,11 +4,11 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <shell/shell_uart.h>
-#include <drivers/uart.h>
-#include <init.h>
-#include <logging/log.h>
-#include <net/buf.h>
+#include <zephyr/shell/shell_uart.h>
+#include <zephyr/drivers/uart.h>
+#include <zephyr/init.h>
+#include <zephyr/logging/log.h>
+#include <zephyr/net/buf.h>
 
 #define LOG_MODULE_NAME shell_uart
 LOG_MODULE_REGISTER(shell_uart);
@@ -124,17 +124,19 @@ static void uart_tx_handle(const struct device *dev,
 			   const struct shell_uart *sh_uart)
 {
 	uint32_t len;
-	int err;
 	const uint8_t *data;
 
 	len = ring_buf_get_claim(sh_uart->tx_ringbuf, (uint8_t **)&data,
 				 sh_uart->tx_ringbuf->size);
 	if (len) {
+		int err;
+
 		/* Wait for DTR signal before sending anything to output. */
 		uart_dtr_wait(dev);
 		len = uart_fifo_fill(dev, data, len);
 		err = ring_buf_get_finish(sh_uart->tx_ringbuf, len);
 		__ASSERT_NO_MSG(err == 0);
+		ARG_UNUSED(err);
 	} else {
 		uart_irq_tx_disable(dev);
 		sh_uart->ctrl_blk->tx_busy = 0;
@@ -314,7 +316,7 @@ const struct shell_transport_api shell_uart_transport_api = {
 static int enable_shell_uart(const struct device *arg)
 {
 	ARG_UNUSED(arg);
-	const struct device *dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_shell_uart));
+	const struct device *const dev = DEVICE_DT_GET(DT_CHOSEN(zephyr_shell_uart));
 	bool log_backend = CONFIG_SHELL_BACKEND_SERIAL_LOG_LEVEL > 0;
 	uint32_t level =
 		(CONFIG_SHELL_BACKEND_SERIAL_LOG_LEVEL > LOG_LEVEL_DBG) ?

@@ -8,13 +8,14 @@
 #define DT_DRV_COMPAT atmel_sam_spi
 
 #define LOG_LEVEL CONFIG_SPI_LOG_LEVEL
-#include <logging/log.h>
+#include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(spi_sam);
 
 #include "spi_context.h"
 #include <errno.h>
-#include <device.h>
-#include <drivers/spi.h>
+#include <zephyr/device.h>
+#include <zephyr/drivers/spi.h>
+#include <zephyr/drivers/pinctrl.h>
 #include <soc.h>
 
 #define SAM_SPI_CHIP_SELECT_COUNT			4
@@ -23,8 +24,7 @@ LOG_MODULE_REGISTER(spi_sam);
 struct spi_sam_config {
 	Spi *regs;
 	uint32_t periph_id;
-	uint32_t num_pins;
-	struct soc_gpio_pin pins[];
+	const struct pinctrl_dev_config *pcfg;
 };
 
 /* Device run time data */
@@ -370,7 +370,7 @@ static int spi_sam_transceive(const struct device *dev,
 	Spi *regs = cfg->regs;
 	int err;
 
-	spi_context_lock(&data->ctx, false, NULL, config);
+	spi_context_lock(&data->ctx, false, NULL, NULL, config);
 
 	err = spi_sam_configure(dev, config);
 	if (err != 0) {
@@ -414,9 +414,10 @@ static int spi_sam_transceive_async(const struct device *dev,
 				     const struct spi_config *config,
 				     const struct spi_buf_set *tx_bufs,
 				     const struct spi_buf_set *rx_bufs,
-				     struct k_poll_signal *async)
+				     spi_callback_t cb,
+				     void *userdata)
 {
-	/* TODO: implement asyc transceive */
+	/* TODO: implement async transceive */
 	return -ENOTSUP;
 }
 #endif /* CONFIG_SPI_ASYNC */
@@ -439,7 +440,10 @@ static int spi_sam_init(const struct device *dev)
 
 	soc_pmc_peripheral_enable(cfg->periph_id);
 
-	soc_gpio_list_configure(cfg->pins, cfg->num_pins);
+	err = pinctrl_apply_state(cfg->pcfg, PINCTRL_STATE_DEFAULT);
+	if (err < 0) {
+		return err;
+	}
 
 	err = spi_context_cs_configure_all(&data->ctx);
 	if (err < 0) {
@@ -467,11 +471,11 @@ static const struct spi_driver_api spi_sam_driver_api = {
 	static const struct spi_sam_config spi_sam_config_##n = {	\
 		.regs = (Spi *)DT_INST_REG_ADDR(n),			\
 		.periph_id = DT_INST_PROP(n, peripheral_id),		\
-		.num_pins = ATMEL_SAM_DT_INST_NUM_PINS(n),		\
-		.pins = ATMEL_SAM_DT_INST_PINS(n),			\
+		.pcfg = PINCTRL_DT_INST_DEV_CONFIG_GET(n),		\
 	}
 
 #define SPI_SAM_DEVICE_INIT(n)						\
+	PINCTRL_DT_INST_DEFINE(n);					\
 	SPI_SAM_DEFINE_CONFIG(n);					\
 	static struct spi_sam_data spi_sam_dev_data_##n = {		\
 		SPI_CONTEXT_INIT_LOCK(spi_sam_dev_data_##n, ctx),	\

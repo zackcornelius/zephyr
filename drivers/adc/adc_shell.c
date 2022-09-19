@@ -4,12 +4,12 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <shell/shell.h>
+#include <zephyr/shell/shell.h>
 #include <stdlib.h>
-#include <drivers/adc.h>
+#include <zephyr/drivers/adc.h>
 #include <ctype.h>
-#include <sys/util.h>
-#include <devicetree.h>
+#include <zephyr/sys/util.h>
+#include <zephyr/devicetree.h>
 
 #if DT_HAS_COMPAT_STATUS_OKAY(atmel_sam_afec)
 #define DT_DRV_COMPAT atmel_sam_afec
@@ -37,6 +37,8 @@
 #define DT_DRV_COMPAT nuvoton_npcx_adc
 #elif DT_HAS_COMPAT_STATUS_OKAY(ti_cc32xx_adc)
 #define DT_DRV_COMPAT ti_cc32xx_adc
+#elif DT_HAS_COMPAT_STATUS_OKAY(raspberrypi_pico_adc)
+#define DT_DRV_COMPAT raspberrypi_pico_adc
 #elif DT_HAS_COMPAT_STATUS_OKAY(zephyr_adc_emul)
 #define DT_DRV_COMPAT zephyr_adc_emul
 #else
@@ -44,7 +46,7 @@
 #endif
 
 #define LOG_LEVEL CONFIG_LOG_DEFAULT_LEVEL
-#include <logging/log.h>
+#include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(adc_shell);
 
 #define CMD_HELP_ACQ_TIME 			\

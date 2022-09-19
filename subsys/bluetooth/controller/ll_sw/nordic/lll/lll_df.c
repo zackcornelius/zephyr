@@ -6,7 +6,7 @@
 
 #include <stdint.h>
 #include <soc.h>
-#include <bluetooth/hci.h>
+#include <zephyr/bluetooth/hci.h>
 
 #include "util/util.h"
 #include "util/memq.h"
@@ -14,6 +14,7 @@
 #include "util/dbuf.h"
 
 #include "hal/cpu.h"
+#include "hal/ccm.h"
 #include "hal/radio_df.h"
 
 #include "pdu.h"

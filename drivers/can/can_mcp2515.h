@@ -8,8 +8,8 @@
 #ifndef _MCP2515_H_
 #define _MCP2515_H_
 
-#include <drivers/gpio.h>
-#include <drivers/can.h>
+#include <zephyr/drivers/gpio.h>
+#include <zephyr/drivers/can.h>
 
 #define MCP2515_RX_CNT                   2
 /* Reduce the number of Tx buffers to 1 in order to avoid priority inversion. */
@@ -38,13 +38,15 @@ struct mcp2515_data {
 	uint32_t filter_usage;
 	can_rx_callback_t rx_cb[CONFIG_CAN_MAX_FILTER];
 	void *cb_arg[CONFIG_CAN_MAX_FILTER];
-	struct zcan_filter filter[CONFIG_CAN_MAX_FILTER];
+	struct can_filter filter[CONFIG_CAN_MAX_FILTER];
 	can_state_change_callback_t state_change_cb;
 	void *state_change_cb_data;
 
 	/* general data */
 	struct k_mutex mutex;
 	enum can_state old_state;
+	uint8_t mcp2515_mode;
+	bool started;
 	uint8_t sjw;
 };
 

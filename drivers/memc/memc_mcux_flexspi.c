@@ -6,8 +6,11 @@
 
 #define DT_DRV_COMPAT	nxp_imx_flexspi
 
-#include <logging/log.h>
-#include <sys/util.h>
+#include <zephyr/logging/log.h>
+#include <zephyr/sys/util.h>
+#ifdef CONFIG_PINCTRL
+#include <zephyr/drivers/pinctrl.h>
+#endif
 
 #include "memc_mcux_flexspi.h"
 
@@ -37,6 +40,9 @@ struct memc_flexspi_data {
 	bool combination_mode;
 	bool sck_differential_clock;
 	flexspi_read_sample_clock_t rx_sample_clock;
+#ifdef CONFIG_PINCTRL
+	const struct pinctrl_dev_config *pincfg;
+#endif
 	size_t size[kFLEXSPI_PortCount];
 };
 
@@ -137,6 +143,19 @@ static int memc_flexspi_init(const struct device *dev)
 		return 0;
 	}
 
+	/*
+	 * SOCs such as the RT1064 and RT1024 have internal flash, and no pinmux
+	 * settings, continue if no pinctrl state found.
+	 */
+#ifdef CONFIG_PINCTRL
+	int ret;
+
+	ret = pinctrl_apply_state(data->pincfg, PINCTRL_STATE_DEFAULT);
+	if (ret < 0 && ret != -ENOENT) {
+		return ret;
+	}
+#endif
+
 	FLEXSPI_GetDefaultConfig(&flexspi_config);
 
 	flexspi_config.ahbConfig.enableAHBBufferable = data->ahb_bufferable;
@@ -159,13 +178,22 @@ static int memc_flexspi_init(const struct device *dev)
 #define MEMC_FLEXSPI_CFG_XIP(node_id) DT_SAME_NODE(node_id, DT_NODELABEL(flexspi))
 #elif defined(CONFIG_XIP) && defined(CONFIG_CODE_FLEXSPI2)
 #define MEMC_FLEXSPI_CFG_XIP(node_id) DT_SAME_NODE(node_id, DT_NODELABEL(flexspi2))
-#elif defined(CONFIG_SOC_SERIES_IMX_RT6XX)
+#elif defined(CONFIG_SOC_SERIES_IMX_RT6XX) || defined(CONFIG_SOC_SERIES_IMX_RT5XX)
 #define MEMC_FLEXSPI_CFG_XIP(node_id) IS_ENABLED(CONFIG_XIP)
 #else
 #define MEMC_FLEXSPI_CFG_XIP(node_id) false
 #endif
 
+#ifdef CONFIG_PINCTRL
+#define PINCTRL_DEFINE(n) PINCTRL_DT_INST_DEFINE(n);
+#define PINCTRL_INIT(n) .pincfg = PINCTRL_DT_INST_DEV_CONFIG_GET(n),
+#else
+#define PINCTRL_DEFINE(n)
+#define PINCTRL_INIT(n)
+#endif
+
 #define MEMC_FLEXSPI(n)							\
+	PINCTRL_DEFINE(n)						\
 	static struct memc_flexspi_data					\
 		memc_flexspi_data_##n = {				\
 		.base = (FLEXSPI_Type *) DT_INST_REG_ADDR(n),		\
@@ -178,6 +206,7 @@ static int memc_flexspi_init(const struct device *dev)
 		.combination_mode = DT_INST_PROP(n, combination_mode),	\
 		.sck_differential_clock = DT_INST_PROP(n, sck_differential_clock),	\
 		.rx_sample_clock = DT_INST_PROP(n, rx_clock_source),	\
+		PINCTRL_INIT(n)						\
 	};								\
 									\
 	DEVICE_DT_INST_DEFINE(n,					\

@@ -4,91 +4,29 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+#include <zephyr/sys/byteorder.h>
 #include <string.h>
 
-#include "tinycbor/cbor.h"
-#include "mgmt/endian.h"
 #include "mgmt/mgmt.h"
+#include <zephyr/mgmt/mcumgr/buf.h>
+#include <zcbor_encode.h>
+#include <zcbor_common.h>
 
 static mgmt_on_evt_cb evt_cb;
-static struct mgmt_group *mgmt_group_list;
-static struct mgmt_group *mgmt_group_list_end;
-
-void *
-mgmt_streamer_alloc_rsp(struct mgmt_streamer *streamer, const void *req)
-{
-	return streamer->cfg->alloc_rsp(req, streamer->cb_arg);
-}
-
-void
-mgmt_streamer_trim_front(struct mgmt_streamer *streamer, void *buf, size_t len)
-{
-	streamer->cfg->trim_front(buf, len, streamer->cb_arg);
-}
-
-void
-mgmt_streamer_reset_buf(struct mgmt_streamer *streamer, void *buf)
-{
-	streamer->cfg->reset_buf(buf, streamer->cb_arg);
-}
-
-int
-mgmt_streamer_write_hdr(struct mgmt_streamer *streamer, const struct mgmt_hdr *hdr)
-{
-	return streamer->cfg->write_hdr(streamer->writer, hdr);
-}
-
-int
-mgmt_streamer_init_reader(struct mgmt_streamer *streamer, void *buf)
-{
-	return streamer->cfg->init_reader(streamer->reader, buf);
-}
-
-int
-mgmt_streamer_init_writer(struct mgmt_streamer *streamer, void *buf)
-{
-	return streamer->cfg->init_writer(streamer->writer, buf);
-}
-
-void
-mgmt_streamer_free_buf(struct mgmt_streamer *streamer, void *buf)
-{
-	streamer->cfg->free_buf(buf, streamer->cb_arg);
-}
+static sys_slist_t mgmt_group_list =
+	SYS_SLIST_STATIC_INIT(&mgmt_group_list);
 
 void
 mgmt_unregister_group(struct mgmt_group *group)
 {
-	struct mgmt_group *curr = mgmt_group_list, *prev = NULL;
-
-	if (!group) {
-		return;
-	}
-
-	if (curr == group) {
-		mgmt_group_list = curr->mg_next;
-		return;
-	}
-
-	while (curr && curr != group) {
-		prev = curr;
-		curr = curr->mg_next;
-	}
-
-	if (!prev || !curr) {
-		return;
-	}
-
-	prev->mg_next = curr->mg_next;
-	if (curr->mg_next == NULL) {
-		mgmt_group_list_end = curr;
-	}
+	(void)sys_slist_find_and_remove(&mgmt_group_list, &group->node);
 }
 
-static struct mgmt_group *
-mgmt_find_group(uint16_t group_id, uint16_t command_id)
+const struct mgmt_handler *
+mgmt_find_handler(uint16_t group_id, uint16_t command_id)
 {
-	struct mgmt_group *group;
+	struct mgmt_group *group = NULL;
+	sys_snode_t *snp, *sns;
 
 	/*
 	 * Find the group with the specified group id, if one exists
@@ -96,119 +34,49 @@ mgmt_find_group(uint16_t group_id, uint16_t command_id)
 	 * that is not NULL. If that is not set, look for the group
 	 * with a command id that is set
 	 */
-	for (group = mgmt_group_list; group != NULL; group = group->mg_next) {
-		if (group->mg_group_id == group_id) {
-			if (command_id >= group->mg_handlers_count) {
-				return NULL;
+	SYS_SLIST_FOR_EACH_NODE_SAFE(&mgmt_group_list, snp, sns) {
+		struct mgmt_group *loop_group =
+			CONTAINER_OF(snp, struct mgmt_group, node);
+		if (loop_group->mg_group_id == group_id) {
+			if (command_id >= loop_group->mg_handlers_count) {
+				break;
 			}
 
-			if (!group->mg_handlers[command_id].mh_read &&
-				!group->mg_handlers[command_id].mh_write) {
+			if (!loop_group->mg_handlers[command_id].mh_read &&
+				!loop_group->mg_handlers[command_id].mh_write) {
 				continue;
 			}
 
+			group = loop_group;
 			break;
 		}
 	}
 
-	return group;
-}
-
-void
-mgmt_register_group(struct mgmt_group *group)
-{
-	if (mgmt_group_list_end == NULL) {
-		mgmt_group_list = group;
-	} else {
-		mgmt_group_list_end->mg_next = group;
-	}
-	mgmt_group_list_end = group;
-}
-
-const struct mgmt_handler *
-mgmt_find_handler(uint16_t group_id, uint16_t command_id)
-{
-	const struct mgmt_group *group;
-
-	group = mgmt_find_group(group_id, command_id);
-	if (!group) {
+	if (group == NULL) {
 		return NULL;
 	}
 
 	return &group->mg_handlers[command_id];
 }
 
-int
-mgmt_write_rsp_status(struct mgmt_ctxt *ctxt, int errcode)
+void
+mgmt_register_group(struct mgmt_group *group)
 {
-	int rc;
-
-	rc = cbor_encode_text_stringz(&ctxt->encoder, "rc");
-	if (rc != 0) {
-		return rc;
-	}
-
-	rc = cbor_encode_int(&ctxt->encoder, errcode);
-	if (rc != 0) {
-		return rc;
-	}
-
-#ifdef CONFIG_MGMT_VERBOSE_ERR_RESPONSE
-	if (MGMT_CTXT_RC_RSN(ctxt) != NULL) {
-		rc = cbor_encode_text_stringz(&ctxt->encoder, "rsn");
-		if (rc != 0) {
-			return rc;
-		}
-
-		rc = cbor_encode_text_stringz(&ctxt->encoder, MGMT_CTXT_RC_RSN(ctxt));
-		if (rc != 0) {
-			return rc;
-		}
-	}
-#endif
-
-	return 0;
-}
-
-int
-mgmt_err_from_cbor(int cbor_status)
-{
-	switch (cbor_status) {
-	case CborNoError:
-		return MGMT_ERR_EOK;
-	case CborErrorOutOfMemory:
-		return MGMT_ERR_ENOMEM;
-	}
-	return MGMT_ERR_EUNKNOWN;
-}
-
-int
-mgmt_ctxt_init(struct mgmt_ctxt *ctxt, struct mgmt_streamer *streamer)
-{
-	int rc;
-
-	rc = cbor_parser_init(streamer->reader, 0, &ctxt->parser, &ctxt->it);
-	if (rc != CborNoError) {
-		return mgmt_err_from_cbor(rc);
-	}
-
-	cbor_encoder_init(&ctxt->encoder, streamer->writer, 0);
-
-	return 0;
+	sys_slist_append(&mgmt_group_list, &group->node);
 }
 
 void
 mgmt_ntoh_hdr(struct mgmt_hdr *hdr)
 {
-	hdr->nh_len = ntohs(hdr->nh_len);
-	hdr->nh_group = ntohs(hdr->nh_group);
+	hdr->nh_len = sys_be16_to_cpu(hdr->nh_len);
+	hdr->nh_group = sys_be16_to_cpu(hdr->nh_group);
 }
 
 void
 mgmt_hton_hdr(struct mgmt_hdr *hdr)
 {
-	hdr->nh_len = htons(hdr->nh_len);
-	hdr->nh_group = htons(hdr->nh_group);
+	hdr->nh_len = sys_cpu_to_be16(hdr->nh_len);
+	hdr->nh_group = sys_cpu_to_be16(hdr->nh_group);
 }
 
 void

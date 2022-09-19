@@ -14,29 +14,41 @@
  *        Please validate for newly added series.
  */
 
-#include <kernel.h>
-#include <arch/cpu.h>
-#include <sys/__assert.h>
+#include <zephyr/kernel.h>
+#include <zephyr/arch/cpu.h>
+#include <zephyr/sys/__assert.h>
 #include <soc.h>
-#include <init.h>
-#include <drivers/uart.h>
-#include <drivers/clock_control.h>
-#include <pm/policy.h>
+#include <zephyr/init.h>
+#include <zephyr/drivers/uart.h>
+#include <zephyr/drivers/clock_control.h>
+#include <zephyr/pm/policy.h>
+#include <zephyr/pm/device.h>
 
 #ifdef CONFIG_UART_ASYNC_API
-#include <drivers/dma/dma_stm32.h>
-#include <drivers/dma.h>
+#include <zephyr/drivers/dma/dma_stm32.h>
+#include <zephyr/drivers/dma.h>
 #endif
 
-#include <linker/sections.h>
-#include <drivers/clock_control/stm32_clock_control.h>
+#include <zephyr/linker/sections.h>
+#include <zephyr/drivers/clock_control/stm32_clock_control.h>
 #include "uart_stm32.h"
 
 #include <stm32_ll_usart.h>
 #include <stm32_ll_lpuart.h>
+#if defined(CONFIG_PM) && defined(IS_UART_WAKEUP_FROMSTOP_INSTANCE)
+#include <stm32_ll_exti.h>
+#endif /* CONFIG_PM */
 
-#include <logging/log.h>
+#include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(uart_stm32, CONFIG_UART_LOG_LEVEL);
+
+/* This symbol takes the value 1 if one of the device instances */
+/* is configured in dts with a domain clock */
+#if STM32_DT_INST_DEV_DOMAIN_CLOCK_SUPPORT
+#define STM32_UART_DOMAIN_CLOCK_SUPPORT 1
+#else
+#define STM32_UART_DOMAIN_CLOCK_SUPPORT 0
+#endif
 
 #define HAS_LPUART_1 (DT_NODE_HAS_COMPAT_STATUS(DT_NODELABEL(lpuart1), \
 					 st_stm32_lpuart, okay))
@@ -69,8 +81,6 @@ uint32_t lpuartdiv_calc(const uint64_t clock_rate, const uint32_t baud_rate)
 #endif /* USART_PRESC_PRESCALER */
 #endif /* HAS_LPUART_1 */
 
-#define TIMEOUT 1000
-
 #ifdef CONFIG_PM
 static void uart_stm32_pm_policy_state_lock_get(const struct device *dev)
 {
@@ -78,7 +88,7 @@ static void uart_stm32_pm_policy_state_lock_get(const struct device *dev)
 
 	if (!data->pm_policy_state_on) {
 		data->pm_policy_state_on = true;
-		pm_policy_state_lock_get(PM_STATE_SUSPEND_TO_IDLE);
+		pm_policy_state_lock_get(PM_STATE_SUSPEND_TO_IDLE, PM_ALL_SUBSTATES);
 	}
 }
 
@@ -88,13 +98,12 @@ static void uart_stm32_pm_policy_state_lock_put(const struct device *dev)
 
 	if (data->pm_policy_state_on) {
 		data->pm_policy_state_on = false;
-		pm_policy_state_lock_put(PM_STATE_SUSPEND_TO_IDLE);
+		pm_policy_state_lock_put(PM_STATE_SUSPEND_TO_IDLE, PM_ALL_SUBSTATES);
 	}
 }
 #endif /* CONFIG_PM */
 
-static inline void uart_stm32_set_baudrate(const struct device *dev,
-					   uint32_t baud_rate)
+static inline void uart_stm32_set_baudrate(const struct device *dev, uint32_t baud_rate)
 {
 	const struct uart_stm32_config *config = dev->config;
 	struct uart_stm32_data *data = dev->data;
@@ -102,11 +111,20 @@ static inline void uart_stm32_set_baudrate(const struct device *dev,
 	uint32_t clock_rate;
 
 	/* Get clock rate */
-	if (clock_control_get_rate(data->clock,
-			       (clock_control_subsys_t *)&config->pclken,
-			       &clock_rate) < 0) {
-		LOG_ERR("Failed call clock_control_get_rate");
-		return;
+	if (IS_ENABLED(STM32_UART_DOMAIN_CLOCK_SUPPORT) && (config->pclk_len > 1)) {
+		if (clock_control_get_rate(data->clock,
+					   (clock_control_subsys_t)&config->pclken[1],
+					   &clock_rate) < 0) {
+			LOG_ERR("Failed call clock_control_get_rate(pclken[1])");
+			return;
+		}
+	} else {
+		if (clock_control_get_rate(data->clock,
+					   (clock_control_subsys_t)&config->pclken[0],
+					   &clock_rate) < 0) {
+			LOG_ERR("Failed call clock_control_get_rate(pclken[0])");
+			return;
+		}
 	}
 
 #if HAS_LPUART_1
@@ -144,6 +162,13 @@ static inline void uart_stm32_set_baudrate(const struct device *dev,
 				      presc_val,
 #endif
 				      baud_rate);
+		/* Check BRR is greater than or equal to 0x300 */
+		__ASSERT(LL_LPUART_ReadReg(config->usart, BRR) >= 0x300U,
+			 "BaudRateReg >= 0x300");
+
+		/* Check BRR is lower than or equal to 0xFFFFF */
+		__ASSERT(LL_LPUART_ReadReg(config->usart, BRR) < 0x000FFFFFU,
+			 "BaudRateReg < 0xFFFF");
 	} else {
 #endif /* HAS_LPUART_1 */
 #ifdef USART_CR1_OVER8
@@ -159,6 +184,9 @@ static inline void uart_stm32_set_baudrate(const struct device *dev,
 				     LL_USART_OVERSAMPLING_16,
 #endif
 				     baud_rate);
+		/* Check BRR is greater than or equal to 16d */
+		__ASSERT(LL_USART_ReadReg(config->usart, BRR) > 16,
+			 "BaudRateReg >= 16");
 
 #if HAS_LPUART_1
 	}
@@ -523,7 +551,7 @@ static void uart_stm32_poll_out(const struct device *dev,
 #ifdef CONFIG_PM
 	struct uart_stm32_data *data = dev->data;
 #endif
-	int key;
+	unsigned int key;
 
 	/* Wait for TXE flag to be raised
 	 * When TXE flag is raised, we lock interrupts to prevent interrupts (notably that of usart)
@@ -622,7 +650,7 @@ static int uart_stm32_err_check(const struct device *dev)
 static inline void __uart_stm32_get_clock(const struct device *dev)
 {
 	struct uart_stm32_data *data = dev->data;
-	const struct device *clk = DEVICE_DT_GET(STM32_CLOCK_CONTROL_NODE);
+	const struct device *const clk = DEVICE_DT_GET(STM32_CLOCK_CONTROL_NODE);
 
 	data->clock = clk;
 }
@@ -635,7 +663,7 @@ static int uart_stm32_fifo_fill(const struct device *dev,
 {
 	const struct uart_stm32_config *config = dev->config;
 	uint8_t num_tx = 0U;
-	int key;
+	unsigned int key;
 
 	if (!LL_USART_IsActiveFlag_TXE(config->usart)) {
 		return num_tx;
@@ -688,7 +716,7 @@ static void uart_stm32_irq_tx_enable(const struct device *dev)
 	const struct uart_stm32_config *config = dev->config;
 #ifdef CONFIG_PM
 	struct uart_stm32_data *data = dev->data;
-	int key;
+	unsigned int key;
 #endif
 
 #ifdef CONFIG_PM
@@ -709,7 +737,7 @@ static void uart_stm32_irq_tx_disable(const struct device *dev)
 	const struct uart_stm32_config *config = dev->config;
 #ifdef CONFIG_PM
 	struct uart_stm32_data *data = dev->data;
-	int key;
+	unsigned int key;
 
 	key = irq_lock();
 #endif
@@ -1404,7 +1432,7 @@ static int uart_stm32_async_init(const struct device *dev)
 	}
 
 	if (data->dma_tx.dma_dev != NULL) {
-		if (!device_is_ready(data->dma_rx.dma_dev)) {
+		if (!device_is_ready(data->dma_tx.dma_dev)) {
 			return -ENODEV;
 		}
 	}
@@ -1549,10 +1577,27 @@ static int uart_stm32_init(const struct device *dev)
 	int err;
 
 	__uart_stm32_get_clock(dev);
+
+	if (!device_is_ready(data->clock)) {
+		LOG_ERR("clock control device not ready");
+		return -ENODEV;
+	}
+
 	/* enable clock */
-	if (clock_control_on(data->clock,
-			(clock_control_subsys_t *)&config->pclken) != 0) {
-		return -EIO;
+	err = clock_control_on(data->clock, (clock_control_subsys_t)&config->pclken[0]);
+	if (err != 0) {
+		LOG_ERR("Could not enable (LP)UART clock");
+		return err;
+	}
+
+	if (IS_ENABLED(STM32_UART_DOMAIN_CLOCK_SUPPORT) && (config->pclk_len > 1)) {
+		err = clock_control_configure(DEVICE_DT_GET(STM32_CLOCK_CONTROL_NODE),
+					      (clock_control_subsys_t) &config->pclken[1],
+					      NULL);
+		if (err != 0) {
+			LOG_ERR("Could not select UART domain clock");
+			return err;
+		}
 	}
 
 	/* Configure dt provided device signals when available */
@@ -1606,6 +1651,24 @@ static int uart_stm32_init(const struct device *dev)
 		LL_USART_EnableHalfDuplex(config->usart);
 	}
 
+#ifdef LL_USART_TXRX_SWAPPED
+	if (config->tx_rx_swap) {
+		LL_USART_SetTXRXSwap(config->usart, LL_USART_TXRX_SWAPPED);
+	}
+#endif
+
+#ifdef LL_USART_RXPIN_LEVEL_INVERTED
+	if (config->rx_invert) {
+		LL_USART_SetRXPinLevel(config->usart, LL_USART_RXPIN_LEVEL_INVERTED);
+	}
+#endif
+
+#ifdef LL_USART_TXPIN_LEVEL_INVERTED
+	if (config->tx_invert) {
+		LL_USART_SetTXPinLevel(config->usart, LL_USART_TXPIN_LEVEL_INVERTED);
+	}
+#endif
+
 	LL_USART_Enable(config->usart);
 
 #ifdef USART_ISR_TEACK
@@ -1626,12 +1689,97 @@ static int uart_stm32_init(const struct device *dev)
 	config->irq_config_func(dev);
 #endif /* CONFIG_PM || CONFIG_UART_INTERRUPT_DRIVEN || CONFIG_UART_ASYNC_API */
 
+#if defined(CONFIG_PM) && defined(IS_UART_WAKEUP_FROMSTOP_INSTANCE)
+	if (config->wakeup_source) {
+		/* Enable ability to wakeup device in Stop mode
+		 * Effect depends on CONFIG_PM_DEVICE status:
+		 * CONFIG_PM_DEVICE=n : Always active
+		 * CONFIG_PM_DEVICE=y : Controlled by pm_device_wakeup_enable()
+		 */
+		LL_USART_EnableInStopMode(config->usart);
+		if (config->wakeup_line != STM32_EXTI_LINE_NONE) {
+			/* Prepare the WAKEUP with the expected EXTI line */
+			LL_EXTI_EnableIT_0_31(BIT(config->wakeup_line));
+		}
+	}
+#endif /* CONFIG_PM */
+
 #ifdef CONFIG_UART_ASYNC_API
 	return uart_stm32_async_init(dev);
 #else
 	return 0;
 #endif
 }
+
+#ifdef CONFIG_PM_DEVICE
+static void uart_stm32_suspend_setup(const struct device *dev)
+{
+	const struct uart_stm32_config *config = dev->config;
+
+#ifdef USART_ISR_BUSY
+	/* Make sure that no USART transfer is on-going */
+	while (LL_USART_IsActiveFlag_BUSY(config->usart) == 1) {
+	}
+#endif
+	while (LL_USART_IsActiveFlag_TC(config->usart) == 0) {
+	}
+#ifdef USART_ISR_REACK
+	/* Make sure that USART is ready for reception */
+	while (LL_USART_IsActiveFlag_REACK(config->usart) == 0) {
+	}
+#endif
+	/* Clear OVERRUN flag */
+	LL_USART_ClearFlag_ORE(config->usart);
+}
+
+static int uart_stm32_pm_action(const struct device *dev,
+			       enum pm_device_action action)
+{
+	const struct uart_stm32_config *config = dev->config;
+	struct uart_stm32_data *data = dev->data;
+	int err;
+
+
+	switch (action) {
+	case PM_DEVICE_ACTION_RESUME:
+		/* Set pins to active state */
+		err = pinctrl_apply_state(config->pcfg, PINCTRL_STATE_DEFAULT);
+		if (err < 0) {
+			return err;
+		}
+
+		/* enable clock */
+		err = clock_control_on(data->clock, (clock_control_subsys_t)&config->pclken[0]);
+		if (err != 0) {
+			LOG_ERR("Could not enable (LP)UART clock");
+			return err;
+		}
+		break;
+	case PM_DEVICE_ACTION_SUSPEND:
+		uart_stm32_suspend_setup(dev);
+		/* Stop device clock. Note: fixed clocks are not handled yet. */
+		err = clock_control_off(data->clock, (clock_control_subsys_t)&config->pclken[0]);
+		if (err != 0) {
+			LOG_ERR("Could not enable (LP)UART clock");
+			return err;
+		}
+
+		/* Move pins to sleep state */
+		err = pinctrl_apply_state(config->pcfg, PINCTRL_STATE_SLEEP);
+		if (err == -ENOENT) {
+			/* Warn but don't block PM suspend */
+			LOG_WRN("(LP)UART pinctrl sleep state not available ");
+		} else if (err < 0) {
+			return err;
+		}
+		break;
+	default:
+		return -ENOTSUP;
+	}
+
+	return 0;
+}
+#endif /* CONFIG_PM_DEVICE */
 
 #ifdef CONFIG_UART_ASYNC_API
 
@@ -1691,14 +1839,24 @@ static void uart_stm32_irq_config_func_##index(const struct device *dev)	\
 
 #ifdef CONFIG_UART_ASYNC_API
 #define UART_DMA_CHANNEL(index, dir, DIR, src, dest)			\
-.dma_##dir = {				\
+.dma_##dir = {								\
 	COND_CODE_1(DT_INST_DMAS_HAS_NAME(index, dir),			\
 		 (UART_DMA_CHANNEL_INIT(index, dir, DIR, src, dest)),	\
-		 (NULL))				\
+		 (NULL))						\
 	},
 
 #else
 #define UART_DMA_CHANNEL(index, dir, DIR, src, dest)
+#endif
+
+#ifdef CONFIG_PM
+#define STM32_UART_PM_WAKEUP(index)						\
+	.wakeup_source = DT_INST_PROP(index, wakeup_source),			\
+	.wakeup_line = COND_CODE_1(DT_INST_NODE_HAS_PROP(index, wakeup_line),	\
+			(DT_INST_PROP(index, wakeup_line)),			\
+			(STM32_EXTI_LINE_NONE)),
+#else
+#define STM32_UART_PM_WAKEUP(index) /* Not used */
 #endif
 
 #define STM32_UART_INIT(index)						\
@@ -1706,16 +1864,22 @@ STM32_UART_IRQ_HANDLER_DECL(index)					\
 									\
 PINCTRL_DT_INST_DEFINE(index);						\
 									\
+static const struct stm32_pclken pclken_##index[] =			\
+					    STM32_DT_INST_CLOCKS(index);\
+									\
 static const struct uart_stm32_config uart_stm32_cfg_##index = {	\
 	.usart = (USART_TypeDef *)DT_INST_REG_ADDR(index),		\
-	.pclken = { .bus = DT_INST_CLOCKS_CELL(index, bus),		\
-		    .enr = DT_INST_CLOCKS_CELL(index, bits)		\
-	},								\
+	.pclken = pclken_##index,					\
+	.pclk_len = DT_INST_NUM_CLOCKS(index),				\
 	.hw_flow_control = DT_INST_PROP(index, hw_flow_control),	\
 	.parity = DT_INST_ENUM_IDX_OR(index, parity, UART_CFG_PARITY_NONE),	\
 	.pcfg = PINCTRL_DT_INST_DEV_CONFIG_GET(index),			\
-	.single_wire = DT_INST_PROP_OR(index, single_wire, false), \
+	.single_wire = DT_INST_PROP_OR(index, single_wire, false),	\
+	.tx_rx_swap = DT_INST_PROP_OR(index, tx_rx_swap, false),	\
+	.rx_invert = DT_INST_PROP(index, rx_invert),			\
+	.tx_invert = DT_INST_PROP(index, tx_invert),			\
 	STM32_UART_IRQ_HANDLER_FUNC(index)				\
+	STM32_UART_PM_WAKEUP(index)					\
 };									\
 									\
 static struct uart_stm32_data uart_stm32_data_##index = {		\
@@ -1724,9 +1888,11 @@ static struct uart_stm32_data uart_stm32_data_##index = {		\
 	UART_DMA_CHANNEL(index, tx, TX, MEMORY, PERIPHERAL)		\
 };									\
 									\
+PM_DEVICE_DT_INST_DEFINE(index, uart_stm32_pm_action);		        \
+									\
 DEVICE_DT_INST_DEFINE(index,						\
 		    &uart_stm32_init,					\
-		    NULL,						\
+		    PM_DEVICE_DT_INST_GET(index),			\
 		    &uart_stm32_data_##index, &uart_stm32_cfg_##index,	\
 		    PRE_KERNEL_1, CONFIG_SERIAL_INIT_PRIORITY,		\
 		    &uart_stm32_driver_api);				\

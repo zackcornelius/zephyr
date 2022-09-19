@@ -22,6 +22,7 @@
 		zephyr,sram = &sram0;
 		zephyr,flash = &flash0;
 		zephyr,code-partition = &slot0_partition;
+		zephyr,ieee802154 = &ieee802154;
 	};
 
 	leds {
@@ -49,6 +50,8 @@
 		led0 = &led0;
 		led1 = &led1;
 		sw0 = &button0;
+		watchdog0 = &wdt0;
+		spi-flash0 = &gd25q16;
 	};
 };
 
@@ -99,21 +102,22 @@
 	pinctrl-1 = <&qspi_sleep>;
 	pinctrl-names = "default", "sleep";
 	gd25q16: gd25q16@0 {
-		/* NOTE: Quad mode not supported as driver does not handle
-		 * QE bit setting in SR2. Ref. GD25Q16C, Rev 3.0, p. 12.
-		 */
 		compatible = "nordic,qspi-nor";
 		reg = <0>;
-		writeoc = "pp2o";
-		readoc = "read2io";
+		writeoc = "pp4o";
+		readoc = "read4io";
 		sck-frequency = <16000000>;
-		label = "GD25Q16";
 		jedec-id = [c8 40 15];
 		size = <16777216>;
 		has-dpd;
 		t-enter-dpd = <20000>;
 		t-exit-dpd = <20000>;
+		quad-enable-requirements = "S2B1v1";
 	};
+};
+
+&ieee802154 {
+	status = "okay";
 };
 
 &flash0 {
@@ -125,7 +129,7 @@
 
 		boot_partition: partition@0 {
 			label = "mcuboot";
-			reg = <0x000000000 0x0000C000>;
+			reg = <0x00000000 0x0000C000>;
 		};
 		slot0_partition: partition@c000 {
 			label = "image-0";

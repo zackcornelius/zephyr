@@ -3,21 +3,13 @@
  *
  * SPDX-License-Identifier: Apache-2.0
  */
-
-#define DT_DRV_COMPAT intel_cavs_idc
-
 #include <stdint.h>
-#include <device.h>
-#include <init.h>
-#include <drivers/ipm.h>
-#include <arch/common/sys_io.h>
+#include <zephyr/device.h>
+#include <zephyr/init.h>
+#include <zephyr/drivers/ipm.h>
+#include <zephyr/arch/common/sys_io.h>
 
 #include <soc.h>
-
-#ifdef CONFIG_SOC_INTEL_S1000
-#include <soc/shim.h>
-#endif
-
 #include "ipm_cavs_idc.h"
 
 #ifdef CONFIG_SCHED_IPI_SUPPORTED
@@ -196,7 +188,7 @@ static int cavs_idc_set_enabled(const struct device *dev, int enable)
 		idc_write(IPC_IDCCTL, i, mask);
 
 		/* FIXME: when we have API to enable IRQ on specific core. */
-		sys_set_bit(DT_REG_ADDR(DT_NODELABEL(cavs0)) + 0x04 +
+		sys_set_bit(DT_REG_ADDR(DT_NODELABEL(cavs_intc0)) + 0x04 +
 			    CAVS_ICTL_INT_CPU_OFFSET(i),
 			    CAVS_IRQ_NUMBER(DT_INST_IRQN(0)));
 	}

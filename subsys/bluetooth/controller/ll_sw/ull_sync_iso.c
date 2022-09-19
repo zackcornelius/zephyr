@@ -4,9 +4,9 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <zephyr.h>
-#include <bluetooth/bluetooth.h>
-#include <sys/byteorder.h>
+#include <zephyr/kernel.h>
+#include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/sys/byteorder.h>
 
 #include "util/util.h"
 #include "util/mem.h"
@@ -139,6 +139,7 @@ uint8_t ll_big_sync_create(uint8_t big_handle, uint16_t sync_handle,
 	lll->ctrl = 0U;
 	lll->cssn_curr = 0U;
 	lll->cssn_next = 0U;
+	lll->term_reason = 0U;
 
 	/* TODO: Implement usage of MSE to limit listening to subevents */
 
@@ -149,6 +150,7 @@ uint8_t ll_big_sync_create(uint8_t big_handle, uint16_t sync_handle,
 
 		stream = (void *)sync_iso_stream_acquire();
 		stream->big_handle = big_handle;
+		stream->bis_index = bis[i];
 		stream->dp = NULL;
 		lll->stream_handle[i] = sync_iso_stream_handle_get(stream);
 	}
@@ -185,8 +187,6 @@ uint8_t ll_big_sync_terminate(uint8_t big_handle, void **rx)
 			return BT_HCI_ERR_CMD_DISALLOWED;
 		}
 		sync->iso.sync_iso = NULL;
-
-		ull_sync_iso_stream_release(sync_iso);
 
 		node_rx = (void *)sync->iso.node_rx_estab;
 		link_sync_estab = node_rx->hdr.link;
@@ -280,6 +280,11 @@ struct lll_sync_iso_stream *ull_sync_iso_stream_get(uint16_t handle)
 	}
 
 	return &stream_pool[handle];
+}
+
+struct lll_sync_iso_stream *ull_sync_iso_lll_stream_get(uint16_t handle)
+{
+	return ull_sync_iso_stream_get(handle);
 }
 
 void ull_sync_iso_stream_release(struct ll_sync_iso_set *sync_iso)
@@ -453,7 +458,12 @@ void ull_sync_iso_setup(struct ll_sync_iso_set *sync_iso,
 			   HAL_TICKER_US_TO_TICKS(sync_iso_offset_us),
 			   HAL_TICKER_US_TO_TICKS(interval_us),
 			   HAL_TICKER_REMAINDER(interval_us),
+#if !defined(CONFIG_BT_TICKER_LOW_LAT) && \
+	!defined(CONFIG_BT_CTLR_LOW_LAT)
+			   TICKER_LAZY_MUST_EXPIRE,
+#else
 			   TICKER_NULL_LAZY,
+#endif /* !CONFIG_BT_TICKER_LOW_LAT && !CONFIG_BT_CTLR_LOW_LAT */
 			   (sync_iso->ull.ticks_slot + ticks_slot_overhead),
 			   ticker_cb, sync_iso,
 			   ticker_start_op_cb, (void *)__LINE__);
@@ -507,7 +517,11 @@ void ull_sync_iso_done(struct node_rx_event_done *done)
 
 	/* Events elapsed used in timeout checks below */
 	latency_event = lll->latency_event;
-	elapsed_event = latency_event + 1U;
+	if (lll->latency_prepare) {
+		elapsed_event = latency_event + lll->latency_prepare;
+	} else {
+		elapsed_event = latency_event + 1U;
+	}
 
 	/* Sync drift compensation and new skip calculation
 	 */
@@ -680,6 +694,15 @@ static void ticker_cb(uint32_t ticks_at_expire, uint32_t ticks_drift,
 	uint8_t ref;
 
 	DEBUG_RADIO_PREPARE_O(1);
+
+	if (!IS_ENABLED(CONFIG_BT_TICKER_LOW_LAT) &&
+	    !IS_ENABLED(CONFIG_BT_CTLR_LOW_LAT) &&
+	    (lazy == TICKER_LAZY_MUST_EXPIRE)) {
+		/* FIXME: generate ISO PDU with status set to invalid */
+
+		DEBUG_RADIO_PREPARE_O(0);
+		return;
+	}
 
 	sync_iso = param;
 	lll = &sync_iso->lll;

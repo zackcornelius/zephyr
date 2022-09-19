@@ -7,19 +7,21 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-#include <zephyr.h>
+#include <zephyr/kernel.h>
 #include <zephyr/types.h>
 
-#include <device.h>
-#include <init.h>
+#include <zephyr/device.h>
+#include <zephyr/init.h>
 #include <stdlib.h>
 
-#include <bluetooth/bluetooth.h>
-#include <bluetooth/conn.h>
-#include <bluetooth/gatt.h>
-#include <bluetooth/buf.h>
-#include <sys/byteorder.h>
-#include <sys/check.h>
+#include <zephyr/bluetooth/bluetooth.h>
+#include <zephyr/bluetooth/conn.h>
+#include <zephyr/bluetooth/gatt.h>
+#include <zephyr/bluetooth/buf.h>
+#include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/check.h>
+
+#include "audio_internal.h"
 #include "csis_internal.h"
 #include "csis_crypto.h"
 #include "../host/conn_internal.h"
@@ -29,30 +31,10 @@
 #define BT_CSIS_SIH_PRAND_SIZE          3
 #define BT_CSIS_SIH_HASH_SIZE           3
 #define CSIS_SET_LOCK_TIMER_VALUE       K_SECONDS(60)
-#if defined(CONFIG_BT_PRIVACY)
-/* The ADV time (in tens of milliseconds). Shall be less than the RPA.
- * Make it relatively smaller (90%) to handle all ranges. Maximum value is
- * 2^16 - 1 (UINT16_MAX).
- */
-#define CSIS_ADV_TIME  (MIN((CONFIG_BT_RPA_TIMEOUT * 100 * 0.9), UINT16_MAX))
-#else
-/* Without privacy, connectable adv won't update the address when restarting,
- * so we might as well continue advertising non-stop.
- */
-#define CSIS_ADV_TIME  0
-#endif /* CONFIG_BT_PRIVACY */
 
 #define BT_DBG_ENABLED IS_ENABLED(CONFIG_BT_DEBUG_CSIS)
 #define LOG_MODULE_NAME bt_csis
 #include "common/log.h"
-
-#if defined(CONFIG_BT_RPA) && !defined(CONFIG_BT_BONDABLE)
-#define SIRK_READ_PERM	(BT_GATT_PERM_READ_AUTHEN | BT_GATT_PERM_READ_ENCRYPT)
-#else
-#define SIRK_READ_PERM	(BT_GATT_PERM_READ_ENCRYPT)
-#endif
-
-static struct bt_csis_cb *csis_cbs;
 
 static struct bt_csis csis_insts[CONFIG_BT_CSIS_MAX_INSTANCE_COUNT];
 static bt_addr_le_t server_dummy_addr; /* 0'ed address */
@@ -200,7 +182,7 @@ static int generate_prand(uint32_t *dest)
 	return 0;
 }
 
-static int csis_update_psri(struct bt_csis *csis)
+int bt_csis_generate_rsi(const struct bt_csis *csis, uint8_t rsi[BT_CSIS_RSI_SIZE])
 {
 	int res = 0;
 	uint32_t prand;
@@ -220,79 +202,14 @@ static int csis_update_psri(struct bt_csis *csis)
 
 	res = bt_csis_sih(csis->srv.set_sirk.value, prand, &hash);
 	if (res != 0) {
-		BT_WARN("Could not generate new PSRI");
+		BT_WARN("Could not generate new RSI");
 		return res;
 	}
 
-	(void)memcpy(csis->srv.psri, &hash, BT_CSIS_SIH_HASH_SIZE);
-	(void)memcpy(csis->srv.psri + BT_CSIS_SIH_HASH_SIZE, &prand,
-		     BT_CSIS_SIH_PRAND_SIZE);
+	(void)memcpy(rsi, &hash, BT_CSIS_SIH_HASH_SIZE);
+	(void)memcpy(rsi + BT_CSIS_SIH_HASH_SIZE, &prand, BT_CSIS_SIH_PRAND_SIZE);
+
 	return res;
-}
-
-int csis_adv_resume(struct bt_csis *csis)
-{
-	int err;
-	struct bt_data ad[2] = {
-		BT_DATA_BYTES(BT_DATA_FLAGS,
-				BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)
-	};
-
-	BT_DBG("Restarting CSIS advertising");
-
-	if (csis_update_psri(csis) != 0) {
-		return -EAGAIN;
-	}
-
-	ad[1].type = BT_DATA_CSIS_RSI;
-	ad[1].data_len = sizeof(csis->srv.psri);
-	ad[1].data = csis->srv.psri;
-
-#if defined(CONFIG_BT_EXT_ADV)
-	struct bt_le_ext_adv_start_param start_param;
-
-	if (csis->srv.adv == NULL) {
-		struct bt_le_adv_param param;
-
-		(void)memset(&param, 0, sizeof(param));
-		param.options |= BT_LE_ADV_OPT_CONNECTABLE;
-		param.options |= BT_LE_ADV_OPT_SCANNABLE;
-		param.options |= BT_LE_ADV_OPT_USE_NAME;
-
-		param.id = BT_ID_DEFAULT;
-		param.sid = 0;
-		param.interval_min = BT_GAP_ADV_FAST_INT_MIN_2;
-		param.interval_max = BT_GAP_ADV_FAST_INT_MAX_2;
-
-		err = bt_le_ext_adv_create(&param, &csis->srv.adv_cb,
-					   &csis->srv.adv);
-		if (err != 0) {
-			BT_DBG("Could not create adv set: %d", err);
-			return err;
-		}
-	}
-
-	err = bt_le_ext_adv_set_data(csis->srv.adv, ad, ARRAY_SIZE(ad), NULL,
-				     0);
-
-	if (err != 0) {
-		BT_DBG("Could not set adv data: %d", err);
-		return err;
-	}
-
-	(void)memset(&start_param, 0, sizeof(start_param));
-	start_param.timeout = CSIS_ADV_TIME;
-	err = bt_le_ext_adv_start(csis->srv.adv, &start_param);
-#else
-	err = bt_le_adv_start(BT_LE_ADV_CONN_NAME, ad, ARRAY_SIZE(ad), NULL, 0);
-#endif /* CONFIG_BT_EXT_ADV */
-
-	if (err != 0) {
-		BT_DBG("Could not start adv: %d", err);
-		return err;
-	}
-
-	return err;
 }
 
 static ssize_t read_set_sirk(struct bt_conn *conn,
@@ -301,13 +218,13 @@ static ssize_t read_set_sirk(struct bt_conn *conn,
 {
 	struct bt_csis_set_sirk enc_sirk;
 	struct bt_csis_set_sirk *sirk;
-	struct bt_csis *csis = attr->user_data;
+	struct bt_csis *csis = BT_AUDIO_CHRC_USER_DATA(attr);
 
-	if (csis_cbs != NULL && csis_cbs->sirk_read_req != NULL) {
+	if (csis->srv.cb != NULL && csis->srv.cb->sirk_read_req != NULL) {
 		uint8_t cb_rsp;
 
 		/* Ask higher layer for what SIRK to return, if any */
-		cb_rsp = csis_cbs->sirk_read_req(conn, &csis_insts[0]);
+		cb_rsp = csis->srv.cb->sirk_read_req(conn, &csis_insts[0]);
 
 		if (cb_rsp == BT_CSIS_READ_SIRK_REQ_RSP_ACCEPT) {
 			sirk = &csis->srv.set_sirk;
@@ -330,13 +247,14 @@ static ssize_t read_set_sirk(struct bt_conn *conn,
 			return BT_GATT_ERR(BT_ATT_ERR_AUTHORIZATION);
 		} else if (cb_rsp == BT_CSIS_READ_SIRK_REQ_RSP_OOB_ONLY) {
 			return BT_GATT_ERR(BT_CSIS_ERROR_SIRK_OOB_ONLY);
+		} else {
+			BT_ERR("Invalid callback response: %u", cb_rsp);
+			return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
 		}
-
-		BT_ERR("Invalid callback response: %u", cb_rsp);
-		return BT_GATT_ERR(BT_ATT_ERR_UNLIKELY);
+	} else {
+		sirk = &csis->srv.set_sirk;
 	}
 
-	sirk = &csis->srv.set_sirk;
 
 	BT_DBG("Set sirk %sencrypted",
 	       sirk->type ==  BT_CSIS_SIRK_TYPE_PLAIN ? "not " : "");
@@ -356,7 +274,7 @@ static ssize_t read_set_size(struct bt_conn *conn,
 			     const struct bt_gatt_attr *attr,
 			     void *buf, uint16_t len, uint16_t offset)
 {
-	struct bt_csis *csis = attr->user_data;
+	struct bt_csis *csis = BT_AUDIO_CHRC_USER_DATA(attr);
 
 	BT_DBG("%u", csis->srv.set_size);
 
@@ -375,7 +293,7 @@ static ssize_t read_set_lock(struct bt_conn *conn,
 			     const struct bt_gatt_attr *attr,
 			     void *buf, uint16_t len, uint16_t offset)
 {
-	struct bt_csis *csis = attr->user_data;
+	struct bt_csis *csis = BT_AUDIO_CHRC_USER_DATA(attr);
 
 	BT_DBG("%u", csis->srv.set_lock);
 
@@ -384,37 +302,33 @@ static ssize_t read_set_lock(struct bt_conn *conn,
 				 sizeof(csis->srv.set_lock));
 }
 
-static ssize_t write_set_lock(struct bt_conn *conn,
-			      const struct bt_gatt_attr *attr,
-			      const void *buf, uint16_t len,
-			      uint16_t offset, uint8_t flags)
+/**
+ * @brief Set the lock value of a CSIS instance.
+ *
+ * @param conn  The connection locking the instance.
+ *              Will be NULL if the server locally sets the lock.
+ * @param csis  The CSIS instance to change the lock value of
+ * @param val   The lock value (BT_CSIS_LOCK_VALUE or BT_CSIS_RELEASE_VALUE)
+ *
+ * @return BT_CSIS_ERROR_* on failure or 0 if success
+ */
+static uint8_t set_lock(struct bt_conn *conn, struct bt_csis *csis, uint8_t val)
 {
-	uint8_t val;
 	bool notify;
-	struct bt_csis *csis = attr->user_data;
-
-	if (offset != 0) {
-		return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
-	} else if (len != sizeof(val)) {
-		return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
-	}
-
-	(void)memcpy(&val, buf, len);
 
 	if (val != BT_CSIS_RELEASE_VALUE && val != BT_CSIS_LOCK_VALUE) {
-		return BT_GATT_ERR(BT_CSIS_ERROR_LOCK_INVAL_VALUE);
+		return BT_CSIS_ERROR_LOCK_INVAL_VALUE;
 	}
 
 	if (csis->srv.set_lock == BT_CSIS_LOCK_VALUE) {
 		if (val == BT_CSIS_LOCK_VALUE) {
 			if (is_last_client_to_write(csis, conn)) {
-				return BT_GATT_ERR(
-					BT_CSIS_ERROR_LOCK_ALREADY_GRANTED);
+				return BT_CSIS_ERROR_LOCK_ALREADY_GRANTED;
 			} else {
-				return BT_GATT_ERR(BT_CSIS_ERROR_LOCK_DENIED);
+				return BT_CSIS_ERROR_LOCK_DENIED;
 			}
 		} else if (!is_last_client_to_write(csis, conn)) {
-			return BT_GATT_ERR(BT_CSIS_ERROR_LOCK_RELEASE_DENIED);
+			return BT_CSIS_ERROR_LOCK_RELEASE_DENIED;
 		}
 	}
 
@@ -444,12 +358,38 @@ static ssize_t write_set_lock(struct bt_conn *conn,
 		 */
 		notify_clients(csis, conn);
 
-		if (csis_cbs != NULL && csis_cbs->lock_changed != NULL) {
+		if (csis->srv.cb != NULL && csis->srv.cb->lock_changed != NULL) {
 			bool locked = csis->srv.set_lock == BT_CSIS_LOCK_VALUE;
 
-			csis_cbs->lock_changed(conn, csis, locked);
+			csis->srv.cb->lock_changed(conn, csis, locked);
 		}
 	}
+
+	return 0;
+}
+
+static ssize_t write_set_lock(struct bt_conn *conn,
+			      const struct bt_gatt_attr *attr,
+			      const void *buf, uint16_t len,
+			      uint16_t offset, uint8_t flags)
+{
+	ssize_t res;
+	uint8_t val;
+	struct bt_csis *csis = BT_AUDIO_CHRC_USER_DATA(attr);
+
+	if (offset != 0) {
+		return BT_GATT_ERR(BT_ATT_ERR_INVALID_OFFSET);
+	} else if (len != sizeof(val)) {
+		return BT_GATT_ERR(BT_ATT_ERR_INVALID_ATTRIBUTE_LEN);
+	}
+
+	(void)memcpy(&val, buf, len);
+
+	res = set_lock(conn, csis, val);
+	if (res != BT_ATT_ERR_SUCCESS) {
+		return BT_GATT_ERR(res);
+	}
+
 	return len;
 }
 
@@ -462,7 +402,7 @@ static void set_lock_cfg_changed(const struct bt_gatt_attr *attr,
 static ssize_t read_rank(struct bt_conn *conn, const struct bt_gatt_attr *attr,
 			 void *buf, uint16_t len, uint16_t offset)
 {
-	struct bt_csis *csis = attr->user_data;
+	struct bt_csis *csis = BT_AUDIO_CHRC_USER_DATA(attr);
 
 	BT_DBG("%u", csis->srv.rank);
 
@@ -486,10 +426,10 @@ static void set_lock_timer_handler(struct k_work *work)
 	csis->srv.set_lock = BT_CSIS_RELEASE_VALUE;
 	notify_clients(csis, NULL);
 
-	if (csis_cbs != NULL && csis_cbs->lock_changed != NULL) {
+	if (csis->srv.cb != NULL && csis->srv.cb->lock_changed != NULL) {
 		bool locked = csis->srv.set_lock == BT_CSIS_LOCK_VALUE;
 
-		csis_cbs->lock_changed(NULL, csis, locked);
+		csis->srv.cb->lock_changed(NULL, csis, locked);
 	}
 }
 
@@ -523,50 +463,8 @@ static void csis_security_changed(struct bt_conn *conn, bt_security_t level,
 	}
 }
 
-#if defined(CONFIG_BT_EXT_ADV)
-static void csis_connected(struct bt_conn *conn, uint8_t err)
-{
-	if (err == BT_HCI_ERR_SUCCESS) {
-		for (int i = 0; i < ARRAY_SIZE(csis_insts); i++) {
-			struct bt_csis *csis = &csis_insts[i];
-
-			csis->srv.conn_cnt++;
-
-			__ASSERT(csis->srv.conn_cnt <= CONFIG_BT_MAX_CONN,
-				"Invalid csis->srv.conn_cnt value");
-		}
-	}
-}
-
-static void disconnect_adv(struct k_work *work)
-{
-	int err;
-	struct bt_csis_server *server = CONTAINER_OF(work, struct bt_csis_server, work);
-	struct bt_csis *csis = CONTAINER_OF(server, struct bt_csis, srv);
-
-	err = csis_adv_resume(csis);
-
-	if (err != 0) {
-		BT_ERR("Disconnect: Could not restart advertising: %d",
-			err);
-		csis->srv.adv_enabled = false;
-	}
-}
-#endif /* CONFIG_BT_EXT_ADV */
-
 static void handle_csis_disconnect(struct bt_csis *csis, struct bt_conn *conn)
 {
-#if defined(CONFIG_BT_EXT_ADV)
-	__ASSERT(csis->srv.conn_cnt != 0, "Invalid csis->srv.conn_cnt value");
-
-	if (csis->srv.conn_cnt == CONFIG_BT_MAX_CONN &&
-	    csis->srv.adv_enabled) {
-		/* A connection spot opened up */
-		k_work_submit(&csis->srv.work);
-	}
-	csis->srv.conn_cnt--;
-#endif /* CONFIG_BT_EXT_ADV */
-
 	BT_DBG("Non-bonded device");
 	if (is_last_client_to_write(csis, conn)) {
 		(void)memset(&csis->srv.lock_client_addr, 0,
@@ -574,10 +472,10 @@ static void handle_csis_disconnect(struct bt_csis *csis, struct bt_conn *conn)
 		csis->srv.set_lock = BT_CSIS_RELEASE_VALUE;
 		notify_clients(csis, NULL);
 
-		if (csis_cbs != NULL && csis_cbs->lock_changed != NULL) {
+		if (csis->srv.cb != NULL && csis->srv.cb->lock_changed != NULL) {
 			bool locked = csis->srv.set_lock == BT_CSIS_LOCK_VALUE;
 
-			csis_cbs->lock_changed(conn, csis, locked);
+			csis->srv.cb->lock_changed(conn, csis, locked);
 		}
 	}
 
@@ -601,14 +499,6 @@ static void csis_disconnected(struct bt_conn *conn, uint8_t reason)
 {
 	BT_DBG("Disconnected: %s (reason %u)",
 	       bt_addr_le_str(bt_conn_get_dst(conn)), reason);
-
-	/*
-	 * If lock was taken by non-bonded device, set lock to released value,
-	 * and notify other connections.
-	 */
-	if (!bt_addr_le_is_bonded(conn->id, &conn->le.dst)) {
-		return;
-	}
 
 	for (int i = 0; i < ARRAY_SIZE(csis_insts); i++) {
 		handle_csis_disconnect(&csis_insts[i], conn);
@@ -721,111 +611,36 @@ static void csis_bond_deleted(uint8_t id, const bt_addr_le_t *peer)
 }
 
 static struct bt_conn_cb conn_callbacks = {
-
-#if defined(CONFIG_BT_EXT_ADV)
-	.connected = csis_connected,
-#endif /* CONFIG_BT_EXT_ADV */
 	.disconnected = csis_disconnected,
 	.security_changed = csis_security_changed,
 };
 
-static const struct bt_conn_auth_cb auth_callbacks = {
+static struct bt_conn_auth_info_cb auth_callbacks = {
 	.pairing_complete = auth_pairing_complete,
 	.bond_deleted = csis_bond_deleted
 };
 
-#if defined(CONFIG_BT_EXT_ADV)
-/* TODO: Temp fix due to bug in adv callbacks:
- * https://github.com/zephyrproject-rtos/zephyr/issues/30699
- */
-static bool conn_based_timeout;
-static void adv_timeout(struct bt_le_ext_adv *adv,
-			struct bt_le_ext_adv_sent_info *info)
-{
-	struct bt_csis *csis = NULL;
-
-	for (int i = 0; i < ARRAY_SIZE(csis_insts); i++) {
-		if (adv == csis_insts[i].srv.adv) {
-			csis = &csis_insts[i];
-			break;
-		}
-	}
-	__ASSERT(csis != NULL, "Could not find CSIS instance by ADV set %p",
-		 adv);
-
-	if (conn_based_timeout) {
-		return;
-	}
-	conn_based_timeout = false;
-
-	/* Restart to update RSI value with new private address */
-	if (csis->srv.adv_enabled) {
-		int err = csis_adv_resume(csis);
-
-		if (err != 0) {
-			BT_ERR("Timeout: Could not restart advertising: %d",
-			       err);
-			csis->srv.adv_enabled = false;
-		}
-	}
-}
-
-static void adv_connected(struct bt_le_ext_adv *adv,
-			  struct bt_le_ext_adv_connected_info *info)
-{
-	struct bt_csis *csis = NULL;
-
-	for (int i = 0; i < ARRAY_SIZE(csis_insts); i++) {
-		if (adv == csis_insts[i].srv.adv) {
-			csis = &csis_insts[i];
-			break;
-		}
-	}
-	__ASSERT(csis != NULL, "Could not find CSIS instance by ADV set %p",
-		 adv);
-
-	if (csis->srv.conn_cnt < CONFIG_BT_MAX_CONN &&
-	    csis->srv.adv_enabled) {
-		int err = csis_adv_resume(csis);
-
-		if (err != 0) {
-			BT_ERR("Connected: Could not restart advertising: %d",
-			       err);
-			csis->srv.adv_enabled = false;
-		}
-	}
-
-	conn_based_timeout = true;
-}
-#endif /* CONFIG_BT_EXT_ADV */
-
 #define BT_CSIS_SERVICE_DEFINITION(_csis) {\
 	BT_GATT_PRIMARY_SERVICE(BT_UUID_CSIS), \
-	BT_GATT_CHARACTERISTIC(BT_UUID_CSIS_SET_SIRK, \
-			BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, \
-			SIRK_READ_PERM, \
-			read_set_sirk, NULL, &_csis), \
-	BT_GATT_CCC(set_sirk_cfg_changed, \
-			BT_GATT_PERM_READ | BT_GATT_PERM_WRITE_ENCRYPT), \
-	BT_GATT_CHARACTERISTIC(BT_UUID_CSIS_SET_SIZE, \
-			BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, \
-			BT_GATT_PERM_READ_ENCRYPT, \
-			read_set_size, NULL, &_csis), \
-	BT_GATT_CCC(set_size_cfg_changed, \
-			BT_GATT_PERM_READ | BT_GATT_PERM_WRITE_ENCRYPT), \
-	BT_GATT_CHARACTERISTIC(BT_UUID_CSIS_SET_LOCK, \
-			BT_GATT_CHRC_READ | \
-				BT_GATT_CHRC_NOTIFY | \
-				BT_GATT_CHRC_WRITE, \
-			BT_GATT_PERM_READ_ENCRYPT | \
-				BT_GATT_PERM_WRITE_ENCRYPT, \
-			read_set_lock, write_set_lock, &_csis), \
-	BT_GATT_CCC(set_lock_cfg_changed, \
-			BT_GATT_PERM_READ | BT_GATT_PERM_WRITE_ENCRYPT), \
-	BT_GATT_CHARACTERISTIC(BT_UUID_CSIS_RANK, \
-			BT_GATT_CHRC_READ, \
-			BT_GATT_PERM_READ_ENCRYPT, \
-			read_rank, NULL, &_csis) \
+	BT_AUDIO_CHRC(BT_UUID_CSIS_SET_SIRK, \
+		      BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, \
+		      BT_GATT_PERM_READ_ENCRYPT, \
+		      read_set_sirk, NULL, &_csis), \
+	BT_AUDIO_CCC(set_sirk_cfg_changed), \
+	BT_AUDIO_CHRC(BT_UUID_CSIS_SET_SIZE, \
+		      BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY, \
+		      BT_GATT_PERM_READ_ENCRYPT, \
+		      read_set_size, NULL, &_csis), \
+	BT_AUDIO_CCC(set_size_cfg_changed), \
+	BT_AUDIO_CHRC(BT_UUID_CSIS_SET_LOCK, \
+		      BT_GATT_CHRC_READ | BT_GATT_CHRC_NOTIFY | BT_GATT_CHRC_WRITE, \
+		      BT_GATT_PERM_READ_ENCRYPT | BT_GATT_PERM_WRITE_ENCRYPT, \
+		      read_set_lock, write_set_lock, &_csis), \
+	BT_AUDIO_CCC(set_lock_cfg_changed), \
+	BT_AUDIO_CHRC(BT_UUID_CSIS_RANK, \
+		      BT_GATT_CHRC_READ, \
+		      BT_GATT_PERM_READ_ENCRYPT, \
+		      read_rank, NULL, &_csis) \
 	}
 
 BT_GATT_SERVICE_INSTANCE_DEFINE(csis_service_list, csis_insts,
@@ -851,10 +666,12 @@ static bool valid_register_param(const struct bt_csis_register_param *param)
 		return false;
 	}
 
-	if (param->set_size > 0 && param->set_size < BT_CSIS_MINIMUM_SET_SIZE) {
-		BT_DBG("Invalid set size: %u", param->set_size);
+#if CONFIG_BT_CSIS_MAX_INSTANCE_COUNT > 1
+	if (param->parent == NULL) {
+		BT_DBG("Parent service not provided");
 		return false;
 	}
+#endif /* CONFIG_BT_CSIS_MAX_INSTANCE_COUNT > 1 */
 
 	return true;
 }
@@ -885,7 +702,7 @@ int bt_csis_register(const struct bt_csis_register_param *param,
 	instance_cnt++;
 
 	bt_conn_cb_register(&conn_callbacks);
-	bt_conn_auth_cb_register(&auth_callbacks);
+	bt_conn_auth_info_cb_register(&auth_callbacks);
 
 	err = bt_gatt_service_register(inst->srv.service_p);
 	if (err != 0) {
@@ -899,6 +716,7 @@ int bt_csis_register(const struct bt_csis_register_param *param,
 	inst->srv.set_size = param->set_size;
 	inst->srv.set_lock = BT_CSIS_RELEASE_VALUE;
 	inst->srv.set_sirk.type = BT_CSIS_SIRK_TYPE_PLAIN;
+	inst->srv.cb = param->cb;
 
 	if (IS_ENABLED(CONFIG_BT_CSIS_TEST_SAMPLE_DATA)) {
 		uint8_t test_sirk[] = {
@@ -914,49 +732,8 @@ int bt_csis_register(const struct bt_csis_register_param *param,
 			     sizeof(inst->srv.set_sirk.value));
 	}
 
-#if defined(CONFIG_BT_EXT_ADV)
-	inst->srv.adv_cb.sent = adv_timeout;
-	inst->srv.adv_cb.connected = adv_connected;
-	k_work_init(&inst->srv.work, disconnect_adv);
-#endif /* CONFIG_BT_EXT_ADV */
-
 	*csis = inst;
 	return 0;
-}
-
-int bt_csis_advertise(struct bt_csis *csis, bool enable)
-{
-	int err;
-
-	if (enable) {
-		if (csis->srv.adv_enabled) {
-			return -EALREADY;
-		}
-
-		err = csis_adv_resume(csis);
-
-		if (err != 0) {
-			BT_DBG("Could not start adv: %d", err);
-			return err;
-		}
-		csis->srv.adv_enabled = true;
-	} else {
-		if (!csis->srv.adv_enabled) {
-			return -EALREADY;
-		}
-#if defined(CONFIG_BT_EXT_ADV)
-		err = bt_le_ext_adv_stop(csis->srv.adv);
-#else
-		err = bt_le_adv_stop();
-#endif /* CONFIG_BT_EXT_ADV */
-		if (err != 0) {
-			BT_DBG("Could not stop start adv: %d", err);
-			return err;
-		}
-		csis->srv.adv_enabled = false;
-	}
-
-	return err;
 }
 
 int bt_csis_lock(struct bt_csis *csis, bool lock, bool force)
@@ -974,16 +751,15 @@ int bt_csis_lock(struct bt_csis *csis, bool lock, bool force)
 		csis->srv.set_lock = BT_CSIS_RELEASE_VALUE;
 		notify_clients(csis, NULL);
 
-		if (csis_cbs != NULL && csis_cbs->lock_changed != NULL) {
-			csis_cbs->lock_changed(NULL, &csis_insts[0], false);
+		if (csis->srv.cb != NULL && csis->srv.cb->lock_changed != NULL) {
+			csis->srv.cb->lock_changed(NULL, &csis_insts[0], false);
 		}
 	} else {
-		err = write_set_lock(NULL, NULL, &lock_val, sizeof(lock_val), 0,
-				     0);
+		err = set_lock(NULL, csis, lock_val);
 	}
 
 	if (err < 0) {
-		return err;
+		return BT_GATT_ERR(err);
 	} else {
 		return 0;
 	}

@@ -12,10 +12,8 @@
 #include <rom/spi_flash.h>
 #include <zephyr/types.h>
 #include <stdbool.h>
-#include <esp_clk.h>
+#include "esp32c3/clk.h"
 #endif
-
-#include <arch/riscv/arch.h>
 
 /* IRQ numbers */
 #define RISCV_MACHINE_SOFT_IRQ 3 /* Machine Software Interrupt */
@@ -30,8 +28,6 @@
 #define SOC_MCAUSE_IRQ_MASK (1 << 31)
 /* Exception code Mask */
 #define SOC_MCAUSE_EXP_MASK 0x7FFFFFFF
-/* SOC-Specific EXIT ISR command */
-#define SOC_ERET mret
 
 #ifndef _ASMLANGUAGE
 

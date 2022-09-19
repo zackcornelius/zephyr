@@ -6,11 +6,11 @@
 
 #include <stdio.h>
 #include <stdlib.h>
-#include <logging/log_backend.h>
-#include <logging/log_output_dict.h>
-#include <logging/log_backend_std.h>
+#include <zephyr/logging/log_backend.h>
+#include <zephyr/logging/log_output_dict.h>
+#include <zephyr/logging/log_backend_std.h>
 #include <assert.h>
-#include <fs/fs.h>
+#include <zephyr/fs/fs.h>
 
 #define MAX_PATH_LEN 256
 #define MAX_FLASH_WRITE_SIZE 256
@@ -263,6 +263,7 @@ static int allocate_new_file(struct fs_file_t *file)
 	int curr_file_num;
 	struct fs_dirent ent;
 	char fname[MAX_PATH_LEN];
+	off_t file_size;
 
 	assert(file);
 
@@ -339,14 +340,33 @@ static int allocate_new_file(struct fs_file_t *file)
 
 		curr_file_num = newest;
 
-		if (file_ctr >= 1) {
-			curr_file_num++;
-			if (curr_file_num > MAX_FILE_NUMERAL) {
-				curr_file_num = 0;
-			}
+		/* Is there space left in the newest file? */
+		snprintf(fname, sizeof(fname), "%s/%s%04d", CONFIG_LOG_BACKEND_FS_DIR,
+			 CONFIG_LOG_BACKEND_FS_FILE_PREFIX, curr_file_num);
+		rc = fs_open(file, fname, FS_O_CREATE | FS_O_WRITE | FS_O_APPEND);
+		if (rc < 0) {
+			goto out;
 		}
-
-		backend_state = BACKEND_FS_OK;
+		file_size = fs_tell(file);
+		if (file_size < CONFIG_LOG_BACKEND_FS_FILE_SIZE) {
+			/* There is space left to log to the latest file, no need to create
+			 * a new one or delete old ones at this point.
+			 */
+			if (file_ctr == 0) {
+				++file_ctr;
+			}
+			backend_state = BACKEND_FS_OK;
+			goto out;
+		} else {
+			fs_close(file);
+			if (file_ctr >= 1) {
+				curr_file_num++;
+				if (curr_file_num > MAX_FILE_NUMERAL) {
+					curr_file_num = 0;
+				}
+			}
+			backend_state = BACKEND_FS_OK;
+		}
 	} else {
 		fs_close(file);
 
@@ -434,12 +454,6 @@ BUILD_ASSERT(!IS_ENABLED(CONFIG_LOG_MODE_IMMEDIATE),
 static uint8_t __aligned(4) buf[MAX_FLASH_WRITE_SIZE];
 LOG_OUTPUT_DEFINE(log_output, write_log_to_file, buf, MAX_FLASH_WRITE_SIZE);
 
-static void put(const struct log_backend *const backend,
-		struct log_msg *msg)
-{
-	log_backend_std_put(&log_output, 0, msg);
-}
-
 static void log_backend_fs_init(const struct log_backend *const backend)
 {
 }
@@ -464,7 +478,7 @@ static void dropped(const struct log_backend *const backend, uint32_t cnt)
 }
 
 static void process(const struct log_backend *const backend,
-		union log_msg2_generic *msg)
+		union log_msg_generic *msg)
 {
 	uint32_t flags = log_backend_std_get_flags();
 
@@ -480,16 +494,12 @@ static int format_set(const struct log_backend *const backend, uint32_t log_type
 }
 
 static const struct log_backend_api log_backend_fs_api = {
-	.process = IS_ENABLED(CONFIG_LOG2) ? process : NULL,
-	.put = put,
-	.put_sync_string = NULL,
-	.put_sync_hexdump = NULL,
+	.process = process,
 	.panic = panic,
 	.init = log_backend_fs_init,
 	.dropped = dropped,
-	.format_set = IS_ENABLED(CONFIG_LOG1) ? NULL : format_set,
+	.format_set = format_set,
 };
-
 
 LOG_BACKEND_DEFINE(log_backend_fs, log_backend_fs_api, true);
 #endif

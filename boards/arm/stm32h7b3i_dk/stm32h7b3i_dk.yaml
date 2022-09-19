@@ -16,3 +16,6 @@ supported:
   - kscan:touch
   - memc
   - backup_sram
+  - display
+  - can
+  - canfd
