@@ -25,7 +25,7 @@
 
 #include "stm32_hsem.h"
 #include "gpio_stm32.h"
-#include "gpio_utils.h"
+#include <zephyr/drivers/gpio/gpio_utils.h>
 
 /**
  * @brief Common GPIO driver for STM32 MCUs.
@@ -550,8 +550,8 @@ static int gpio_stm32_config(const struct device *dev,
 
 	gpio_stm32_configure_raw(dev, pin, pincfg, 0);
 
-	/* Release clock only if configuration doesn't require bank writes */
-	if ((flags & GPIO_OUTPUT) == 0) {
+	/* Release clock only if pin is disconnected */
+	if (((flags & GPIO_OUTPUT) == 0) && ((flags & GPIO_INPUT) == 0)) {
 		err = pm_device_runtime_put(dev);
 		if (err < 0) {
 			return err;
@@ -706,7 +706,8 @@ static int gpio_stm32_init(const struct device *dev)
 		return -ENODEV;
 	}
 
-#if defined(PWR_CR2_IOSV) && DT_NODE_HAS_STATUS(DT_NODELABEL(gpiog), okay)
+#if (defined(PWR_CR2_IOSV) || defined(PWR_SVMCR_IO2SV)) && \
+	DT_NODE_HAS_STATUS(DT_NODELABEL(gpiog), okay)
 	z_stm32_hsem_lock(CFG_HW_RCC_SEMID, HSEM_LOCK_DEFAULT_RETRY);
 	/* Port G[15:2] requires external power supply */
 	/* Cf: L4/L5 RM, Chapter "Independent I/O supply rail" */

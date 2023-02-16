@@ -8,6 +8,7 @@ add_library(host_mocks STATIC
 
 target_include_directories(host_mocks PUBLIC
   ${ZEPHYR_BASE}/subsys/bluetooth
+  ${ZEPHYR_BASE}/subsys/bluetooth/host
   ${ZEPHYR_BASE}/tests/bluetooth/host
 )
 

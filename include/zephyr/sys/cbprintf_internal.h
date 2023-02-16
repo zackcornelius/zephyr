@@ -14,6 +14,7 @@
 #include <zephyr/toolchain.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/sys/__assert.h>
+#include <zephyr/arch/cpu.h>
 
 /*
  * Special alignment cases
@@ -29,6 +30,8 @@
 #define VA_STACK_MIN_ALIGN	8
 #elif defined(__aarch64__)
 #define VA_STACK_MIN_ALIGN	8
+#elif defined(CONFIG_ARC)
+#define VA_STACK_MIN_ALIGN	ARCH_STACK_PTR_ALIGN
 #elif defined(__riscv)
 #ifdef CONFIG_RISCV_ISA_RV32E
 #define VA_STACK_ALIGN(type)	4
@@ -178,15 +181,15 @@ extern "C" {
 #define Z_CBPRINTF_ARG_SIZE(v) z_cbprintf_cxx_arg_size(v)
 #else
 #define Z_CBPRINTF_ARG_SIZE(v) ({\
-	__auto_type _v = (v) + 0; \
+	__auto_type __v = (v) + 0; \
 	/* Static code analysis may complain about unused variable. */ \
-	(void)_v; \
-	size_t _arg_size = _Generic((v), \
+	(void)__v; \
+	size_t __arg_size = _Generic((v), \
 		float : sizeof(double), \
 		default : \
-			sizeof((_v)) \
+			sizeof((__v)) \
 		); \
-	_arg_size; \
+	__arg_size; \
 })
 #endif
 
@@ -379,6 +382,20 @@ do { \
 		 _name##_buf32)))
 #endif
 
+/* When the first argument of Z_CBPRINTF_STATIC_PACKAGE_GENERIC() is a
+ * static memory location, some compiler warns you if you compare the
+ * location against NULL.  ___is_null() is used to kill this warning.
+ *
+ * The warnings would be visible when you built with -save-temps=obj,
+ * our standard debugging tip for macro problems.
+ *
+ * https://github.com/zephyrproject-rtos/zephyr/issues/51528
+ */
+static ALWAYS_INLINE bool ___is_null(void *p)
+{
+	return p == NULL;
+}
+
 /** @brief Statically package a formatted string with arguments.
  *
  * @param buf buffer. If null then only length is calculated.
@@ -427,7 +444,7 @@ do { \
 	Z_CBPRINTF_ON_STACK_ALLOC(_ros_pos_buf, _ros_cnt); \
 	uint8_t *_rws_buffer; \
 	Z_CBPRINTF_ON_STACK_ALLOC(_rws_buffer, 2 * _rws_cnt); \
-	size_t _pmax = (buf != NULL) ? _inlen : INT32_MAX; \
+	size_t _pmax = !___is_null(buf) ? _inlen : INT32_MAX; \
 	int _pkg_len = 0; \
 	int _total_len = 0; \
 	int _pkg_offset = _align_offset; \

@@ -6,6 +6,8 @@
 
 #define DT_DRV_COMPAT espressif_esp32_wifi
 
+#define _POSIX_C_SOURCE 200809
+
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(esp32_wifi, CONFIG_WIFI_LOG_LEVEL);
 
@@ -236,11 +238,11 @@ static void esp_wifi_event_task(void)
 		switch (evt.event_id) {
 		case ESP32_WIFI_EVENT_STA_START:
 			esp32_data.state = ESP32_STA_STARTED;
-			net_if_up(esp32_wifi_iface);
+			net_eth_carrier_on(esp32_wifi_iface);
 			break;
 		case ESP32_WIFI_EVENT_STA_STOP:
 			esp32_data.state = ESP32_STA_STOPPED;
-			net_if_down(esp32_wifi_iface);
+			net_eth_carrier_off(esp32_wifi_iface);
 			break;
 		case ESP32_WIFI_EVENT_STA_CONNECTED:
 			esp_wifi_handle_connect_event();
@@ -429,8 +431,7 @@ static void esp32_wifi_init(struct net_if *iface)
 	net_if_set_link_addr(iface, dev_data->mac_addr, 6, NET_LINK_ETHERNET);
 
 	ethernet_init(iface);
-
-	net_eth_carrier_on(esp32_wifi_iface);
+	net_if_carrier_off(iface);
 
 	esp_wifi_internal_reg_rxcb(ESP_IF_WIFI_STA, eth_esp32_rx);
 }

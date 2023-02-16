@@ -43,6 +43,12 @@ def _dt_units_to_scale(unit):
         return 20
     if unit in {'g', 'G'}:
         return 30
+    if unit in {'kb', 'Kb'}:
+        return 13
+    if unit in {'mb', 'Mb'}:
+        return 23
+    if unit in {'gb', 'Gb'}:
+        return 33
 
 
 def dt_chosen_label(kconf, _, chosen):
@@ -198,6 +204,9 @@ def _node_int_prop(node, prop, unit=None):
         'k' or 'K'  divide by 1024 (1 << 10)
         'm' or 'M'  divide by 1,048,576 (1 << 20)
         'g' or 'G'  divide by 1,073,741,824 (1 << 30)
+        'kb' or 'Kb'  divide by 8192 (1 << 13)
+        'mb' or 'Mb'  divide by 8,388,608 (1 << 23)
+        'gb' or 'Gb'  divide by 8,589,934,592 (1 << 33)
     """
     if not node:
         return 0
@@ -249,6 +258,9 @@ def _dt_chosen_reg_addr(kconf, chosen, index=0, unit=None):
         'k' or 'K'  divide by 1024 (1 << 10)
         'm' or 'M'  divide by 1,048,576 (1 << 20)
         'g' or 'G'  divide by 1,073,741,824 (1 << 30)
+        'kb' or 'Kb'  divide by 8192 (1 << 13)
+        'mb' or 'Mb'  divide by 8,388,608 (1 << 23)
+        'gb' or 'Gb'  divide by 8,589,934,592 (1 << 33)
     """
     if doc_mode or edt is None:
         return 0
@@ -270,6 +282,9 @@ def _dt_chosen_reg_size(kconf, chosen, index=0, unit=None):
         'k' or 'K'  divide by 1024 (1 << 10)
         'm' or 'M'  divide by 1,048,576 (1 << 20)
         'g' or 'G'  divide by 1,073,741,824 (1 << 30)
+        'kb' or 'Kb'  divide by 8192 (1 << 13)
+        'mb' or 'Mb'  divide by 8,388,608 (1 << 23)
+        'gb' or 'Gb'  divide by 8,589,934,592 (1 << 33)
     """
     if doc_mode or edt is None:
         return 0
@@ -305,6 +320,9 @@ def _dt_node_reg_addr(kconf, path, index=0, unit=None):
         'k' or 'K'  divide by 1024 (1 << 10)
         'm' or 'M'  divide by 1,048,576 (1 << 20)
         'g' or 'G'  divide by 1,073,741,824 (1 << 30)
+        'kb' or 'Kb'  divide by 8192 (1 << 13)
+        'mb' or 'Mb'  divide by 8,388,608 (1 << 23)
+        'gb' or 'Gb'  divide by 8,589,934,592 (1 << 33)
     """
     if doc_mode or edt is None:
         return 0
@@ -328,6 +346,9 @@ def _dt_node_reg_size(kconf, path, index=0, unit=None):
         'k' or 'K'  divide by 1024 (1 << 10)
         'm' or 'M'  divide by 1,048,576 (1 << 20)
         'g' or 'G'  divide by 1,073,741,824 (1 << 30)
+        'kb' or 'Kb'  divide by 8192 (1 << 13)
+        'mb' or 'Mb'  divide by 8,388,608 (1 << 23)
+        'gb' or 'Gb'  divide by 8,589,934,592 (1 << 33)
     """
     if doc_mode or edt is None:
         return 0
@@ -404,6 +425,17 @@ def dt_nodelabel_bool_prop(kconf, _, label, prop):
 
     return _dt_node_bool_prop_generic(edt.label2node.get, label, prop)
 
+def dt_chosen_bool_prop(kconf, _, chosen, prop):
+    """
+    This function takes a /chosen node property named 'chosen', and
+    looks for the chosen node. If that node exists and has a boolean
+    property 'prop', it returns "y". Otherwise, it returns "n".
+    """
+    if doc_mode or edt is None:
+        return "n"
+
+    return _dt_node_bool_prop_generic(edt.chosen_node, chosen, prop)
+
 def _dt_node_has_prop_generic(node_search_function, search_arg, prop):
     """
     This function takes the 'node_search_function' and uses it to search for
@@ -460,6 +492,9 @@ def dt_node_int_prop(kconf, name, path, prop, unit=None):
         'k' or 'K'  divide by 1024 (1 << 10)
         'm' or 'M'  divide by 1,048,576 (1 << 20)
         'g' or 'G'  divide by 1,073,741,824 (1 << 30)
+        'kb' or 'Kb'  divide by 8192 (1 << 13)
+        'mb' or 'Mb'  divide by 8,388,608 (1 << 23)
+        'gb' or 'Gb'  divide by 8,589,934,592 (1 << 33)
     """
     if doc_mode or edt is None:
         return "0"
@@ -584,6 +619,25 @@ def dt_nodelabel_has_compat(kconf, _, label, compat):
 
     return "n"
 
+def dt_node_has_compat(kconf, _, path, compat):
+    """
+    This function takes a 'path' and looks for an EDT node at that path. If it
+    finds an EDT node, it returns "y" if this node is compatible with
+    the provided 'compat'. Otherwise, it return "n" .
+    """
+
+    if doc_mode or edt is None:
+        return "n"
+
+    try:
+        node = edt.get_node(path)
+    except edtlib.EDTError:
+        return "n"
+
+    if node and compat in node.compats:
+        return "y"
+
+    return "n"
 
 def dt_nodelabel_enabled_with_compat(kconf, _, label, compat):
     """
@@ -602,6 +656,25 @@ def dt_nodelabel_enabled_with_compat(kconf, _, label, compat):
     return "n"
 
 
+def dt_nodelabel_array_prop_has_val(kconf, _, label, prop, val):
+    """
+    This function looks for a node with node label 'label'.
+    If the node exists, it checks if the node node has a property
+    'prop' with type "array". If so, and the property contains
+    an element equal to the integer 'val', it returns "y".
+    Otherwise, it returns "n".
+    """
+    if doc_mode or edt is None:
+        return "n"
+
+    node = edt.label2node.get(label)
+
+    if not node or (prop not in node.props) or (node.props[prop].type != "array"):
+        return "n"
+    else:
+        return "y" if int(val, base=0) in node.props[prop].val else "n"
+
+
 def dt_nodelabel_path(kconf, _, label):
     """
     This function takes a node label (not a label property) and
@@ -615,6 +688,38 @@ def dt_nodelabel_path(kconf, _, label):
 
     return node.path if node else ""
 
+def dt_node_parent(kconf, _, path):
+    """
+    This function takes a 'path' and looks for an EDT node at that path. If it
+    finds an EDT node, it will look for the parent of that node. If the parent
+    exists, it will return the path to that parent. Otherwise, an empty string
+    will be returned.
+    """
+    if doc_mode or edt is None:
+        return ""
+
+    try:
+        node = edt.get_node(path)
+    except edtlib.EDTError:
+        return ""
+
+    if node is None:
+        return ""
+
+    return node.parent.path if node.parent else ""
+
+def dt_gpio_hogs_enabled(kconf, _):
+    """
+    Return "y" if any GPIO hog node is enabled. Otherwise, return "n".
+    """
+    if doc_mode or edt is None:
+        return "n"
+
+    for node in edt.nodes:
+        if node.gpio_hogs and node.status == "okay":
+            return "y"
+
+    return "n"
 
 def shields_list_contains(kconf, _, shield):
     """
@@ -661,6 +766,7 @@ functions = {
         "dt_node_reg_size_hex": (dt_node_reg, 1, 3),
         "dt_node_bool_prop": (dt_node_bool_prop, 2, 2),
         "dt_nodelabel_bool_prop": (dt_nodelabel_bool_prop, 2, 2),
+        "dt_chosen_bool_prop": (dt_chosen_bool_prop, 2, 2),
         "dt_node_has_prop": (dt_node_has_prop, 2, 2),
         "dt_nodelabel_has_prop": (dt_nodelabel_has_prop, 2, 2),
         "dt_node_int_prop_int": (dt_node_int_prop, 2, 3),
@@ -669,6 +775,10 @@ functions = {
         "dt_node_array_prop_hex": (dt_node_array_prop, 3, 4),
         "dt_node_str_prop_equals": (dt_node_str_prop_equals, 3, 3),
         "dt_nodelabel_has_compat": (dt_nodelabel_has_compat, 2, 2),
+        "dt_node_has_compat": (dt_node_has_compat, 2, 2),
         "dt_nodelabel_path": (dt_nodelabel_path, 1, 1),
+        "dt_node_parent": (dt_node_parent, 1, 1),
+        "dt_nodelabel_array_prop_has_val": (dt_nodelabel_array_prop_has_val, 3, 3),
+        "dt_gpio_hogs_enabled": (dt_gpio_hogs_enabled, 0, 0),
         "shields_list_contains": (shields_list_contains, 1, 1),
 }

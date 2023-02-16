@@ -18,6 +18,8 @@
 
 #include "ticker/ticker.h"
 
+#include "pdu_df.h"
+#include "lll/pdu_vendor.h"
 #include "pdu.h"
 
 #include "lll.h"
@@ -36,10 +38,10 @@
 #include "ull_scan_internal.h"
 #include "ull_sync_internal.h"
 #include "ull_sync_iso_internal.h"
+#include "ull_df_internal.h"
 
-#define BT_DBG_ENABLED IS_ENABLED(CONFIG_BT_DEBUG_HCI_DRIVER)
-#define LOG_MODULE_NAME bt_ctlr_ull_scan_aux
-#include "common/log.h"
+#include <zephyr/bluetooth/hci.h>
+
 #include <soc.h>
 #include "hal/debug.h"
 
@@ -566,8 +568,7 @@ void ull_scan_aux_setup(memq_link_t *link, struct node_rx_hdr *rx)
 			sync_lll->lll_aux = lll_aux;
 
 			/* In sync context, dispatch immediately */
-			ll_rx_put(link, rx);
-			ll_rx_sched();
+			ll_rx_put_sched(link, rx);
 		} else {
 			lll->lll_aux = lll_aux;
 		}
@@ -697,7 +698,9 @@ void ull_scan_aux_setup(memq_link_t *link, struct node_rx_hdr *rx)
 				      ticks_slot_overhead),
 				     ticker_cb, aux, ticker_op_cb, aux);
 	LL_ASSERT((ticker_status == TICKER_STATUS_SUCCESS) ||
-		  (ticker_status == TICKER_STATUS_BUSY));
+		  (ticker_status == TICKER_STATUS_BUSY) ||
+		  ((ticker_status == TICKER_STATUS_FAILURE) &&
+		   IS_ENABLED(CONFIG_BT_TICKER_LOW_LAT)));
 
 	return;
 
@@ -713,13 +716,26 @@ ull_scan_aux_rx_flush:
 		 * immediately since we are in sync context.
 		 */
 		if (!IS_ENABLED(CONFIG_BT_CTLR_SYNC_PERIODIC) || aux->rx_last) {
-			/* If scan is being disabled, rx has already been
-			 * enqueued before coming here, ull_scan_aux_rx_flush.
-			 * Do not add it, to avoid duplicate report generation,
-			 * release and probable infinite loop processing the
-			 * list.
+			/* If scan is being disabled, rx could already be
+			 * enqueued before coming here to ull_scan_aux_rx_flush.
+			 * Check if rx not the last in the list of received PDUs
+			 * then add it, else do not add it, to avoid duplicate
+			 * report generation, release and probable infinite loop
+			 * processing of the list.
 			 */
 			if (unlikely(scan->is_stop)) {
+				/* Add the node rx to aux context list of node
+				 * rx if not already added when coming here to
+				 * ull_scan_aux_rx_flush. This is handling a
+				 * race condition where in the last PDU in
+				 * chain is received and at the same time scan
+				 * is being disabled.
+				 */
+				if (aux->rx_last != rx) {
+					aux->rx_last->rx_ftr.extra = rx;
+					aux->rx_last = rx;
+				}
+
 				return;
 			}
 
@@ -730,11 +746,10 @@ ull_scan_aux_rx_flush:
 
 			LL_ASSERT(sync_lll);
 
-			ll_rx_put(link, rx);
-			ll_rx_sched();
+			ll_rx_put_sched(link, rx);
 
 			sync = HDR_LLL2ULL(sync_lll);
-			if (unlikely(sync->is_stop)) {
+			if (unlikely(sync->is_stop && sync_lll->lll_aux)) {
 				return;
 			}
 		}
@@ -1190,8 +1205,7 @@ static void aux_sync_partial(void *param)
 	LL_ASSERT(rx);
 	rx->rx_ftr.aux_sched = 1U;
 
-	ll_rx_put(rx->link, rx);
-	ll_rx_sched();
+	ll_rx_put_sched(rx->link, rx);
 }
 
 static void aux_sync_incomplete(void *param)

@@ -5,19 +5,14 @@ set_ifndef(C++ g++)
 # Configures CMake for using GCC, this script is re-used by several
 # GCC-based toolchains
 
-if("${SPARSE}" STREQUAL "y")
-  find_program(CMAKE_C_COMPILER cgcc)
-  find_program(REAL_CC ${CROSS_COMPILE}${CC} PATHS ${TOOLCHAIN_HOME} NO_DEFAULT_PATH)
-  set(ENV{REAL_CC} ${REAL_CC})
-else()
-  find_program(CMAKE_C_COMPILER ${CROSS_COMPILE}${CC} PATHS ${TOOLCHAIN_HOME} NO_DEFAULT_PATH)
-endif()
+find_package(Deprecated COMPONENTS SPARSE)
+find_program(CMAKE_C_COMPILER ${CROSS_COMPILE}${CC} PATHS ${TOOLCHAIN_HOME} NO_DEFAULT_PATH)
 
 if(${CMAKE_C_COMPILER} STREQUAL CMAKE_C_COMPILER-NOTFOUND)
   message(FATAL_ERROR "C compiler ${CROSS_COMPILE}${CC} not found - Please check your toolchain installation")
 endif()
 
-if(CONFIG_CPLUSPLUS)
+if(CONFIG_CPP)
   set(cplusplus_compiler ${CROSS_COMPILE}${C++})
 else()
   if(EXISTS ${CROSS_COMPILE}${C++})

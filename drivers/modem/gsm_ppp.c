@@ -391,6 +391,11 @@ MODEM_CMD_DEFINE(on_cmd_atcmdinfo_cereg)
 			gsm.context.data_cellid);
 	}
 
+	if (argc >= 5) {
+		gsm.context.data_act = unquoted_atoi(argv[4], 10);
+		LOG_INF("act: %u", gsm.context.data_act);
+	}
+
 	return 0;
 }
 
@@ -821,7 +826,7 @@ attaching:
 		/* Read connection quality (RSSI) before PPP carrier is ON */
 		query_rssi_nolock(gsm);
 
-		if (!((gsm->minfo.mdm_rssi > 0) && (gsm->minfo.mdm_rssi != GSM_RSSI_INVALID) &&
+		if (!((gsm->minfo.mdm_rssi) && (gsm->minfo.mdm_rssi != GSM_RSSI_INVALID) &&
 			(gsm->minfo.mdm_rssi < GSM_RSSI_MAXVAL))) {
 
 			LOG_DBG("Not valid RSSI, %s", "retrying...");
@@ -1199,16 +1204,18 @@ void gsm_ppp_stop(const struct device *dev)
 		if (gsm->ppp_dev != NULL) {
 			uart_mux_disable(gsm->ppp_dev);
 		}
-	}
 
-	if (modem_cmd_handler_tx_lock(&gsm->context.cmd_handler, GSM_CMD_LOCK_TIMEOUT) < 0) {
-		LOG_WRN("Failed locking modem cmds!");
+		if (modem_cmd_handler_tx_lock(&gsm->context.cmd_handler,
+								GSM_CMD_LOCK_TIMEOUT) < 0) {
+			LOG_WRN("Failed locking modem cmds!");
+		}
 	}
 
 	if (gsm->modem_off_cb != NULL) {
 		gsm->modem_off_cb(gsm->dev, gsm->user_data);
 	}
 
+	gsm->state = GSM_PPP_STOP;
 	gsm->net_state = GSM_NET_INIT;
 	gsm_ppp_unlock(gsm);
 }
@@ -1357,5 +1364,5 @@ static int gsm_init(const struct device *dev)
 	return 0;
 }
 
-DEVICE_DT_DEFINE(DT_INST(0, zephyr_gsm_ppp), gsm_init, NULL, &gsm, NULL,
+DEVICE_DT_DEFINE(DT_DRV_INST(0), gsm_init, NULL, &gsm, NULL,
 		 POST_KERNEL, CONFIG_MODEM_GSM_INIT_PRIORITY, NULL);
